@@ -1,12 +1,12 @@
 {
   "name": "method-v7-mcp",
   "version": "0.1.0",
-  "description": "Minimal V7-only MCP server for Method industry classification",
-  "type": "module",
+  "description": "Minimal V7-only MCP server for Method industry classification (Next.js + mcp-handler)",
   "scripts": {
-    "dev": "tsx watch src/local.ts",
-    "start": "tsx src/local.ts",
-    "build": "tsc",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "stdio": "tsx src/local.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": ["mcp", "method-crm", "v7-classification"],
@@ -14,12 +14,18 @@
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "dotenv": "^17.4.2",
+    "mcp-handler": "^1.1.0",
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "tsx": "^4.21.1",
     "typescript": "^6.0.3"
   }

@@ -1,5 +1,9 @@
 // Thin wrapper around fetch() for Method API.
 // Holds the API key, sets headers, throws on error.
+//
+// Exported tool implementations are used by:
+//   - app/api/mcp/route.ts (Next.js + mcp-handler, deployed to Vercel)
+//   - src/local.ts (stdio MCP, for local Claude Code use)
 
 const API_BASE = process.env.METHOD_API_BASE_URL ?? 'https://rest.method.me/api/v1/tables';
 
