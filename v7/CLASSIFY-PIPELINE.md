@@ -47,28 +47,68 @@ The MCP returns: `RecordID, AccountFriendlyName, CustomerEmail, CustDatIndustry,
 
 ## Step 1 — Process each account
 
-### 1a. Extract email domain
-Parse `CustomerEmail`. If the domain is a freemail provider (`gmail.com`, `yahoo.com`, `hotmail.com`, `outlook.com`, `aol.com`, `icloud.com`, `protonmail.com`, `zoho.com`, plus regional variants like `.co.uk`, `.ca`), set `email_domain = ""` and skip steps 1c.Source 1, 1c.Source 4.
+### 1a. Method-internal signals (priors) — ALWAYS read first
+Before any external enrichment, read what Method already knows about the account. Treat these as PRIORS that inform reasoning throughout, NOT just fallback.
 
-### 1b. Name-based overrides
+| Field | What it tells us |
+|---|---|
+| `Vertical` (self-selected) | Customer's own industry pick. If set and meaningful (not null, not "Other"), this is a strong signal. |
+| `CustDatIndustry` | Often blank, but when set adds a second self-classification. |
+| `Sector` | Same family as CustDatIndustry. |
+| `CustDatCountOfEmployees` | **Scale signal.** 1 employee + Etsy presence → Artisan. 500 employees → Industrial Mfg. |
+| `CustDatAnnualSales` | Scale signal. Differentiates small operator from established business. |
+| `AccountFriendlyName` | Identifier + sometimes contains industry clues. |
+| `CustomerEmail` | Domain → potential website. Personal name → may indicate solo operator. |
+
+**How to use them:**
+- If `Vertical` is meaningfully set (not null/Other/General), bias toward that L1 and use enrichment to refine L2/L3.
+- Note employee count and revenue range — these constrain plausible classifications (e.g., a 500-employee "marketing agency" is probably a real PBS firm, not a freelancer).
+- Use email domain to decide enrichment path (see 1c).
+
+### 1b. Extract email domain & choose enrichment path
+Parse `CustomerEmail`. Determine `email_domain`. If the domain is a freemail provider (`gmail.com`, `yahoo.com`, `hotmail.com`, `outlook.com`, `aol.com`, `icloud.com`, `protonmail.com`, `zoho.com`, plus regional variants like `.co.uk`, `.ca`), classify the account as **freemail** and use Path B in 1c.
+
+### 1c. Name-based overrides
 If `AccountFriendlyName` contains (case-insensitive): `home watch`, `homewatch`, `property watch`, `house watch`:
 - Classification: `Field Services & Trades` > `Home Watch` > `Home Watch Services`
 - Confidence: 0.90, content_source: `name_override`
 - Skip the rest of Step 1, write and continue
 
-### 1c. Enrichment waterfall
-Run each source in order until you have useful business content (≥100 chars of substantive text):
+### 1d. Enrichment waterfall (two paths based on email)
+
+**Run sources in order until you have useful business content (≥100 chars of substantive text). Use the FIRST source that yields a clear signal. Clay is a FALLBACK after the web sources — only call it if the web waterfall didn't produce enough signal to classify confidently (e.g., still uncertain at the L2 level after 3 web sources).**
+
+#### Path A — Real email domain (NOT freemail)
 
 | # | Source | content_source label | How |
 |---|---|---|---|
-| 1 | WebFetch the email domain | `web_fetch` | Fetch `https://{email_domain}`. Treat parked/dead domains ("for sale", "coming soon", "under construction") as no content. |
-| 2 | WebSearch BBB | `bbb_search` | Search `"{company name} BBB"`. If a BBB result, WebFetch the BBB page (structured industry/description data). |
-| 3 | WebSearch company + city | `search_verified` / `search_snippet` | Search `"{company name}"` (add city/state if known). If results include a real business website, WebFetch it. If WebFetched content mentions the company name → `search_verified`; if you only have search snippets → `search_snippet`. LinkedIn/Yelp/Google Maps listings are valid signals. |
-| 4 | WebSearch the email domain | `domain_search` | Search just the domain. Catches cached descriptions, directory listings, press mentions when the site itself is dead. |
-| 5 | Name + self-selected only | `name_only` | Last resort. Parse the account name for industry clues. Use `Vertical` / `CustDatIndustry` / `Sector` as weak signals. |
+| 1 | WebFetch the email domain | `web_fetch` | **PRIMARY.** Fetch `https://{email_domain}`. Treat parked/dead domains ("for sale", "coming soon", "under construction") as no content. Customer's own website is the highest-fidelity source. |
+| 2 | WebSearch BBB | `bbb_search` | Search `"{company name} BBB"`. If a BBB result, WebFetch the BBB page. |
+| 3 | WebSearch company + city | `search_verified` / `search_snippet` | Search `"{company name}"` (+city/state if known). If results include a real business website, WebFetch it. LinkedIn/Yelp/Google Maps listings are valid signals. |
+| 4 | WebSearch the email domain | `domain_search` | Catches cached descriptions, press mentions when the site itself is dead. |
+| 5 | **Clay enrichment** | `clay` | **Fallback only when web sources didn't yield enough signal.** Use Clay MCP to enrich the company by name + domain. Clay's best contributions: structured industry tag (LinkedIn-derived), scale signals (employees, revenue), tech stack. |
+| 6 | Name + self-selected only | `name_only` | Last resort. Parse name for clues + Vertical fallback table. |
 
-### 1d. Classify in a single reasoning pass
-With the taxonomy (incl. disambiguation_notes), 4 principles, and enrichment data in your context:
+#### Path B — Freemail email domain (gmail/yahoo/etc.)
+
+| # | Source | content_source label | How |
+|---|---|---|---|
+| 1 | WebSearch BBB | `bbb_search` | Search `"{company name} BBB"`. If a BBB result, WebFetch the BBB page. |
+| 2 | WebSearch company + city | `search_verified` / `search_snippet` | Search `"{company name}"` (+city/state if known). If results include a real business website, WebFetch it. |
+| 3 | **Clay enrichment** | `clay` | **Fallback only when web sources didn't yield enough signal.** Try Clay by name. Often returns nothing for personal-name accounts. |
+| 4 | Name + self-selected only | `name_only` | Last resort. Parse name for clues + Vertical fallback table. |
+
+#### When to invoke Clay (the fallback rule)
+
+After running the web sources for the relevant path, ask: **"Do I have enough signal to classify confidently (≥0.65 confidence at L2 level)?"**
+
+- ✅ Yes → skip Clay, proceed to 1e. (Saves a Clay credit; web data is sufficient.)
+- ❌ No → invoke Clay. Reason across web + Clay together for the final decision.
+
+This adaptive use of Clay keeps the cost down while ensuring we have a safety net for accounts with weak web presence.
+
+### 1e. Classify in a single reasoning pass
+With the Method-internal priors (1a), enrichment data (1d), the taxonomy (incl. disambiguation_notes), and the 4 principles in your context:
 
 1. **What does this business do?** Synthesize all signals into a business description (1–2 sentences).
 2. **Apply Principle 1 (Identity).** What would the owner say at a cocktail party? Use the Classification Matrix:
@@ -115,10 +155,10 @@ With the taxonomy (incl. disambiguation_notes), 4 principles, and enrichment dat
 
 Skip mapping for vague self-selected values: `Consulting and Professional Services`, `General service based`, `General product based`, `Other`, `General`, `Unknown`.
 
-### 1e. Validate the (L1, L2, L3) tuple
+### 1f. Validate the (L1, L2, L3) tuple
 Confirm the tuple exists in the valid combos set you parsed in 0a. If L3 is valid but L1/L2 are wrong, fix using the L3 lookup dict.
 
-### 1f. Compute final confidence
+### 1g. Compute final confidence
 ```
 final_confidence = 0.60 * ai_confidence + 0.25 * source_weight + 0.15 * content_factor
 ```
@@ -144,22 +184,27 @@ final_confidence = 0.60 * ai_confidence + 0.25 * source_weight + 0.15 * content_
 
 **Hard cap:** `name_only` sources max at `final_confidence = 0.70`.
 
-### 1g. Set the review flag
+### 1h. Set the review flag
 `needs_review = true` when ANY of:
-- `final_confidence < 0.50`
+- `final_confidence < 0.55`
 - No `Vertical` AND `final_confidence < 0.60`
 - Classification is `UNCLASSIFIABLE`
 
-### 1h. Write the result
-Call MCP tool `write_v7_classification` with:
-- `account_record_id` — the source account's RecordID (integer)
-- `l1`, `l2`, `l3` — the classification labels (strings)
+### 1i. Write the result
+Call MCP tool `write_v7_classification` with ALL 13 fields populated where you have them:
+- `account_record_id` — source account's RecordID (integer, required)
+- `l1`, `l2`, `l3` — V7 labels (strings, required)
 - `confidence` — `final_confidence` (0.0–1.0)
 - `version` — `"V7.1"`
-- `reasoning` — one sentence on why this label (≤200 chars)
+- `classified_at` — ISO 8601 timestamp of this run
 - `needs_review` — boolean
+- `content_source` — which source drove the classification (`web_fetch`, `clay`, `bbb_search`, etc.)
+- `business_description` — 1–2 sentence summary of what the business does
+- `short_reasoning` — one sentence on why this L1/L2/L3
+- `confidence_reason` — one sentence explaining the confidence number
+- `evidence_urls` — comma-separated URLs of sources used (Clay calls aren't URLs; for web sources include the actual URLs)
 
-Verify the response contains `success: true` and `new_record_id`. If not, log the error and continue to the next account.
+Verify the response contains `success: true` and `action: "created"` (or `"updated"` for an UPSERT). If error, log and continue.
 
 ---
 
