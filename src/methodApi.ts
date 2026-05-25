@@ -80,28 +80,79 @@ export async function getAccountsNeedingClassification(limit = 200): Promise<Met
   return real.slice(0, cappedLimit);
 }
 
+export interface V7ClassificationInput {
+  account_record_id: number;
+  l1: string;
+  l2: string;
+  l3: string;
+  confidence?: number;
+  version?: string;
+  classified_at?: string;          // ISO 8601 datetime
+  needs_review?: boolean;
+  content_source?: string;
+  business_description?: string;
+  short_reasoning?: string;
+  confidence_reason?: string;
+  evidence_urls?: string;
+}
+
 export interface WriteV7Result {
   success: true;
-  new_record_id: number;
+  action: 'created' | 'updated';
+  record_id: number;               // RecordID of the row in CustomerIndustryClassification
   source_account_record_id: number;
 }
 
 // Hardcoded destination — never parameterize this.
 const DEST_TABLE = 'CustomerIndustryClassification';
 
-export async function writeV7Classification(input: {
-  account_record_id: number;
-  l1: string;
-  l2: string;
-  l3: string;
-}): Promise<WriteV7Result> {
-  // Test table schema: L1, L2, L3 (with L3 storing AccountRecordID as text for now).
-  // Production schema will add AccountRecordID + Confidence + Version + etc.
-  const body = {
+export async function writeV7Classification(input: V7ClassificationInput): Promise<WriteV7Result> {
+  // Build the request body — only include fields the caller provided.
+  // Method field names match what the user configured in the Tables & Fields UI.
+  const body: Record<string, unknown> = {
+    AccountRecordID: input.account_record_id,
     L1: input.l1,
     L2: input.l2,
     L3: input.l3,
   };
+  if (input.confidence !== undefined) body.Confidence = input.confidence;
+  if (input.version) body.Version = input.version;
+  if (input.classified_at) body.ClassifiedAt = input.classified_at;
+  if (input.needs_review !== undefined) body.NeedsReview = input.needs_review;
+  if (input.content_source) body.ContentSource = input.content_source;
+  if (input.business_description) body.BusinessDescription = input.business_description;
+  if (input.short_reasoning) body.ShortReasoning = input.short_reasoning;
+  if (input.confidence_reason) body.ConfidenceReason = input.confidence_reason;
+  if (input.evidence_urls) body.EvidenceUrls = input.evidence_urls;
+
+  // UPSERT: enforce one-classification-per-account at the application layer.
+  // (Method's Link field type doesn't expose Required/Unique flags, so we
+  // can't rely on a DB constraint to dedupe.)
+  const filter = `AccountRecordID eq ${input.account_record_id}`;
+  const params = new URLSearchParams({
+    select: 'RecordID',
+    filter,
+    top: '1',
+  });
+  const lookupRes = await methodApi(`/${DEST_TABLE}?${params.toString()}`);
+  const lookup = (await lookupRes.json()) as { count: number; value: Array<{ RecordID: number }> };
+
+  if (lookup.value.length > 0) {
+    // Existing row — PATCH it in place.
+    const existingId = lookup.value[0].RecordID;
+    await methodApi(`/${DEST_TABLE}/${existingId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+    return {
+      success: true,
+      action: 'updated',
+      record_id: existingId,
+      source_account_record_id: input.account_record_id,
+    };
+  }
+
+  // No existing row — POST new.
   const res = await methodApi(`/${DEST_TABLE}`, {
     method: 'POST',
     body: JSON.stringify(body),
@@ -113,7 +164,8 @@ export async function writeV7Classification(input: {
   }
   return {
     success: true,
-    new_record_id: newId,
+    action: 'created',
+    record_id: newId,
     source_account_record_id: input.account_record_id,
   };
 }
