@@ -13,7 +13,7 @@ const handler = createMcpHandler(
   (server) => {
     server.tool(
       'get_accounts_needing_v7_classification',
-      'Returns Method customer accounts that need V7 industry classification. Filters to active, paying, non-test, non-Methoder accounts and excludes internal/template account names. Sorted by newest RecordID first.',
+      'Returns Method customer accounts that need V7 industry classification. Filters to active, paying, non-test, non-Methoder accounts and excludes internal/template account names. By default also excludes accounts that already have a row in CustomerIndustryClassification (so each call returns only fresh work). Sorted by newest RecordID first.',
       {
         limit: z
           .number()
@@ -22,9 +22,16 @@ const handler = createMcpHandler(
           .max(500)
           .optional()
           .describe('Max accounts to return (default 200, max 500)'),
+        exclude_already_classified: z
+          .boolean()
+          .optional()
+          .describe('When true (default), filters out accounts that already have a classification row. Set to false to include re-runs.'),
       },
-      async ({ limit }) => {
-        const accounts = await getAccountsNeedingClassification(limit ?? 200);
+      async ({ limit, exclude_already_classified }) => {
+        const accounts = await getAccountsNeedingClassification(
+          limit ?? 200,
+          exclude_already_classified ?? true,
+        );
         return {
           content: [
             {
@@ -62,7 +69,7 @@ const handler = createMcpHandler(
         classified_at: z
           .string()
           .optional()
-          .describe('ISO 8601 timestamp of when classification was made. Defaults to server time if omitted.'),
+          .describe('Full ISO 8601 datetime (e.g., "2026-05-25T18:25:00Z") of when classification was made. If omitted or if a date-only string is passed, the server uses the current time.'),
         needs_review: z
           .boolean()
           .optional()

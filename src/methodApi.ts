@@ -48,10 +48,36 @@ function isInternalAccount(name: string): boolean {
   return INTERNAL_NAME_PATTERNS.some((p) => lc.includes(p));
 }
 
-export async function getAccountsNeedingClassification(limit = 200): Promise<MethodAccount[]> {
+// Method API caps page size at 100. Paginate via skip to pull all classified IDs.
+async function fetchAllClassifiedAccountIds(): Promise<Set<number>> {
+  const ids = new Set<number>();
+  const pageSize = 100;
+  let skip = 0;
+  while (true) {
+    const params = new URLSearchParams({
+      select: 'AccountRecordID',
+      top: String(pageSize),
+      skip: String(skip),
+      orderby: 'RecordID asc',
+    });
+    const res = await methodApi(`/${DEST_TABLE}?${params.toString()}`);
+    const data = (await res.json()) as { value: Array<{ AccountRecordID?: number | null }> };
+    for (const r of data.value) {
+      if (typeof r.AccountRecordID === 'number') ids.add(r.AccountRecordID);
+    }
+    if (data.value.length < pageSize) break;
+    skip += pageSize;
+  }
+  return ids;
+}
+
+export async function getAccountsNeedingClassification(
+  limit = 200,
+  excludeAlreadyClassified = true,
+): Promise<MethodAccount[]> {
   const cappedLimit = Math.min(Math.max(limit, 1), 500);
-  // Fetch a wider net so we have room to filter internals client-side.
-  const fetchLimit = Math.min(cappedLimit * 3, 500);
+  // Fetch a wider net so we have room to filter internals + already-classified client-side.
+  const fetchLimit = Math.min(cappedLimit * 4, 500);
 
   const filter = 'IsActive eq true and IsTestAccount eq false and IsMethoderAccount eq false';
   const select = [
@@ -76,8 +102,14 @@ export async function getAccountsNeedingClassification(limit = 200): Promise<Met
   const data = (await res.json()) as { count: number; value: MethodAccount[] };
 
   // Client-side filter against Method-internal/template name patterns
-  const real = data.value.filter((a) => !isInternalAccount(a.AccountFriendlyName));
-  return real.slice(0, cappedLimit);
+  let candidates = data.value.filter((a) => !isInternalAccount(a.AccountFriendlyName));
+
+  if (excludeAlreadyClassified) {
+    const classified = await fetchAllClassifiedAccountIds();
+    candidates = candidates.filter((a) => !classified.has(a.RecordID));
+  }
+
+  return candidates.slice(0, cappedLimit);
 }
 
 export interface V7ClassificationInput {
@@ -106,6 +138,19 @@ export interface WriteV7Result {
 // Hardcoded destination — never parameterize this.
 const DEST_TABLE = 'CustomerIndustryClassification';
 
+// Normalize the caller-supplied timestamp.
+// - Missing → server time (now)
+// - Date-only "YYYY-MM-DD" → server time (avoids the midnight bug)
+// - Anything that parses as a valid Date → its ISO 8601 form
+// - Anything else (garbage) → server time
+function normalizeClassifiedAt(input?: string): string {
+  if (!input) return new Date().toISOString();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return new Date().toISOString();
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
 export async function writeV7Classification(input: V7ClassificationInput): Promise<WriteV7Result> {
   // Build the request body — only include fields the caller provided.
   // Method field names match what the user configured in the Tables & Fields UI.
@@ -117,7 +162,7 @@ export async function writeV7Classification(input: V7ClassificationInput): Promi
   };
   if (input.confidence !== undefined) body.Confidence = input.confidence;
   if (input.version) body.Version = input.version;
-  if (input.classified_at) body.ClassifiedAt = input.classified_at;
+  body.ClassifiedAt = normalizeClassifiedAt(input.classified_at);
   if (input.needs_review !== undefined) body.NeedsReview = input.needs_review;
   if (input.content_source) body.ContentSource = input.content_source;
   if (input.business_description) body.BusinessDescription = input.business_description;
