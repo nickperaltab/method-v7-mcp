@@ -37,9 +37,12 @@ export interface MethodAccount {
   CustDatAnnualSales?: number;
 }
 
+// Substring patterns that identify Method-internal accounts via the friendly name.
+// "test" is intentionally NOT in this list — a customer trial named "Test Kitchen LLC"
+// is a real account. Method-curated test accounts are caught by IsTestAccount=true.
 const INTERNAL_NAME_PATTERNS = [
   'template', 'qbo', 'restore', 'paid', 'demo',
-  'alocet', 'methodappstore', 'test',
+  'alocet', 'methodappstore',
 ];
 
 function isInternalAccount(name: string): boolean {
