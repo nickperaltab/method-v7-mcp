@@ -29,12 +29,15 @@ async function methodApi(path: string, init: RequestInit = {}): Promise<Response
 export interface MethodAccount {
   RecordID: number;
   AccountFriendlyName: string;
+  CompanyAccount?: string;         // Tenant identifier — see V7-Pipeline-Spec §14.2
   CustomerEmail: string;
   CustDatIndustry?: string;
   Vertical?: string | null;
   Sector?: string;
   CustDatCountOfEmployees?: number;
   CustDatAnnualSales?: number;
+  DeveloperCompanyName?: string | null;  // If set to a non-Method partner, account is partner-managed — see §14.3
+  IsActive?: boolean;
 }
 
 // Substring patterns that identify Method-internal accounts via the friendly name.
@@ -50,6 +53,22 @@ function isInternalAccount(name: string): boolean {
   if (lc.startsWith('m11') || lc.startsWith('m18')) return true;
   return INTERNAL_NAME_PATTERNS.some((p) => lc.includes(p));
 }
+
+// Shared field list used by both account-fetching tools so callers see a
+// consistent shape. Adding a field here surfaces it in every tool output.
+const ACCOUNT_SELECT_FIELDS = [
+  'RecordID',
+  'AccountFriendlyName',
+  'CompanyAccount',
+  'CustomerEmail',
+  'CustDatIndustry',
+  'Vertical',
+  'Sector',
+  'CustDatCountOfEmployees',
+  'CustDatAnnualSales',
+  'DeveloperCompanyName',
+  'IsActive',
+];
 
 // Method API caps page size at 100. Paginate via skip to pull all classified IDs.
 async function fetchAllClassifiedAccountIds(): Promise<Set<number>> {
@@ -83,16 +102,7 @@ export async function getAccountsNeedingClassification(
   const fetchLimit = Math.min(cappedLimit * 4, 500);
 
   const filter = 'IsActive eq true and IsTestAccount eq false and IsMethoderAccount eq false';
-  const select = [
-    'RecordID',
-    'AccountFriendlyName',
-    'CustomerEmail',
-    'CustDatIndustry',
-    'Vertical',
-    'Sector',
-    'CustDatCountOfEmployees',
-    'CustDatAnnualSales',
-  ].join(',');
+  const select = ACCOUNT_SELECT_FIELDS.join(',');
 
   const params = new URLSearchParams({
     select,
@@ -113,6 +123,32 @@ export async function getAccountsNeedingClassification(
   }
 
   return candidates.slice(0, cappedLimit);
+}
+
+// Targeted lookup: fetch full data for a specific list of RecordIDs.
+// Does NOT apply the internal-account or active-paying filter — caller asked
+// for these specific IDs and gets exactly those rows back. Used for drift
+// studies, targeted re-runs, and review-loop reclassification.
+//
+// Method API caps top=100 per page; batches >100 are split into multiple
+// round trips and concatenated.
+export async function getAccountsByIds(ids: number[]): Promise<MethodAccount[]> {
+  if (ids.length === 0) return [];
+  const PAGE = 100;
+  const out: MethodAccount[] = [];
+  for (let i = 0; i < ids.length; i += PAGE) {
+    const batch = ids.slice(i, i + PAGE);
+    const filter = batch.map((id) => `RecordID eq ${id}`).join(' or ');
+    const params = new URLSearchParams({
+      select: ACCOUNT_SELECT_FIELDS.join(','),
+      filter,
+      top: String(batch.length),
+    });
+    const res = await methodApi(`/CustomerMethodAccount?${params.toString()}`);
+    const data = (await res.json()) as { value: MethodAccount[] };
+    out.push(...data.value);
+  }
+  return out;
 }
 
 export interface V7ClassificationInput {

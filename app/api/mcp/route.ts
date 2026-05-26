@@ -5,6 +5,7 @@
 import { createMcpHandler } from 'mcp-handler';
 import { z } from 'zod';
 import {
+  getAccountsByIds,
   getAccountsNeedingClassification,
   writeV7Classification,
 } from '../../../src/methodApi';
@@ -32,6 +33,29 @@ const handler = createMcpHandler(
           limit ?? 200,
           exclude_already_classified ?? true,
         );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ count: accounts.length, accounts }, null, 2),
+            },
+          ],
+        };
+      },
+    );
+
+    server.tool(
+      'get_accounts_by_ids',
+      'Fetch full classification-ready data for a specific list of Method account RecordIDs. Use for drift studies, targeted re-classification, and review-loop reclassification. Returns the same fields as get_accounts_needing_v7_classification, but does NOT apply the internal-account or active-paying filter — you get exactly the rows you asked for.',
+      {
+        account_record_ids: z
+          .array(z.number().int().positive())
+          .min(1)
+          .max(500)
+          .describe('List of CustomerMethodAccount RecordIDs to fetch (1–500).'),
+      },
+      async ({ account_record_ids }) => {
+        const accounts = await getAccountsByIds(account_record_ids);
         return {
           content: [
             {
