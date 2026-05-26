@@ -7,6 +7,9 @@ import { z } from 'zod';
 import {
   getAccountsByIds,
   getAccountsNeedingClassification,
+  getClassificationForAccount,
+  getRecentClassifications,
+  markClassificationReviewed,
   OPERATING_MODELS,
   writeV7Classification,
 } from '../../../src/methodApi';
@@ -64,6 +67,56 @@ const handler = createMcpHandler(
               text: JSON.stringify({ count: accounts.length, accounts }, null, 2),
             },
           ],
+        };
+      },
+    );
+
+    server.tool(
+      'get_recent_classifications',
+      'Browse classifications from the CustomerIndustryClassification table, most recent first. Use to review yesterday\'s output, audit low-confidence calls, filter by OperatingModel or L1, etc. Returns full classification rows with reasoning.',
+      {
+        limit: z.number().int().positive().max(100).optional().describe('Max rows to return (default 20, max 100)'),
+        since_date: z.string().optional().describe('Filter to classifications made on or after this date (ISO 8601, e.g. "2026-05-25" or "2026-05-25T00:00:00Z")'),
+        needs_review_only: z.boolean().optional().describe('Only return rows where NeedsReview is true'),
+        min_confidence: z.number().min(0).max(1).optional().describe('Minimum Confidence (0.0–1.0)'),
+        max_confidence: z.number().min(0).max(1).optional().describe('Maximum Confidence (0.0–1.0) — useful for finding low-confidence rows to review'),
+        operating_model: z.enum(OPERATING_MODELS).optional().describe('Filter by OperatingModel value'),
+        l1: z.string().optional().describe('Filter by L1 label exactly (e.g. "Manufacturing & Distribution")'),
+      },
+      async (args) => {
+        const rows = await getRecentClassifications(args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ count: rows.length, classifications: rows }, null, 2) }],
+        };
+      },
+    );
+
+    server.tool(
+      'get_classification_for_account',
+      'Drill into the classification for a specific account. Pass either the AccountRecordID (preferred — exact match) or the AccountFriendlyName (substring, case-insensitive — useful when you only remember the company name). Returns both the classification and the source account row for context.',
+      {
+        account_record_id: z.number().int().positive().optional().describe('The CustomerMethodAccount RecordID (preferred)'),
+        account_friendly_name: z.string().optional().describe('Substring of AccountFriendlyName (case-insensitive). First match wins.'),
+      },
+      async (args) => {
+        const result = await getClassificationForAccount(args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      },
+    );
+
+    server.tool(
+      'mark_classification_reviewed',
+      'Toggle the NeedsReview flag on an existing classification row. Use needs_review=false to confirm a classification is correct as-is; use needs_review=true to flag a row that needs another look. To change L1/L2/L3/etc., call write_v7_classification with the corrected values instead (UPSERT will overwrite the row).',
+      {
+        account_record_id: z.number().int().positive().describe('The CustomerMethodAccount RecordID whose classification you\'re marking'),
+        needs_review: z.boolean().describe('false = reviewed and correct, true = flag for further review'),
+      },
+      async (args) => {
+        const result = await markClassificationReviewed(args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
       },
     );

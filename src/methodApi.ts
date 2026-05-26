@@ -125,6 +125,170 @@ export async function getAccountsNeedingClassification(
   return candidates.slice(0, cappedLimit);
 }
 
+// ── Review tools ─────────────────────────────────────────────────────────
+// Three read/light-write tools that let an operator browse classifications
+// from a Claude.ai conversation, drill into specifics, and toggle the
+// NeedsReview flag once a row has been spot-checked.
+
+export interface ClassificationRow {
+  RecordID: number;
+  AccountRecordID: number;
+  L1: string;
+  L2: string;
+  L3: string;
+  Confidence?: number;
+  Version?: string;
+  ClassifiedAt?: string;
+  NeedsReview?: boolean;
+  ContentSource?: string;
+  BusinessDescription?: string;
+  ShortReasoning?: string;
+  ConfidenceReason?: string;
+  EvidenceUrls?: string;
+  OperatingModel?: string;
+}
+
+const CLASSIFICATION_SELECT_FIELDS = [
+  'RecordID',
+  'AccountRecordID',
+  'L1',
+  'L2',
+  'L3',
+  'Confidence',
+  'Version',
+  'ClassifiedAt',
+  'NeedsReview',
+  'ContentSource',
+  'BusinessDescription',
+  'ShortReasoning',
+  'ConfidenceReason',
+  'EvidenceUrls',
+  'OperatingModel',
+];
+
+export interface GetRecentClassificationsInput {
+  limit?: number;
+  since_date?: string;          // ISO 8601, e.g. "2026-05-25" or "2026-05-25T00:00:00Z"
+  needs_review_only?: boolean;
+  min_confidence?: number;      // 0.0–1.0
+  max_confidence?: number;      // 0.0–1.0
+  operating_model?: OperatingModel;
+  l1?: string;
+}
+
+export async function getRecentClassifications(
+  input: GetRecentClassificationsInput,
+): Promise<ClassificationRow[]> {
+  const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
+  const filters: string[] = [];
+  if (input.since_date) {
+    const norm = /^\d{4}-\d{2}-\d{2}$/.test(input.since_date)
+      ? `${input.since_date}T00:00:00Z`
+      : input.since_date;
+    filters.push(`ClassifiedAt ge ${norm}`);
+  }
+  if (input.needs_review_only) filters.push('NeedsReview eq true');
+  if (input.min_confidence !== undefined) filters.push(`Confidence ge ${input.min_confidence}`);
+  if (input.max_confidence !== undefined) filters.push(`Confidence le ${input.max_confidence}`);
+  if (input.operating_model) filters.push(`OperatingModel eq '${input.operating_model.replace(/'/g, "''")}'`);
+  if (input.l1) filters.push(`L1 eq '${input.l1.replace(/'/g, "''")}'`);
+
+  const params = new URLSearchParams({
+    select: CLASSIFICATION_SELECT_FIELDS.join(','),
+    top: String(limit),
+    orderby: 'ClassifiedAt desc',
+  });
+  if (filters.length > 0) params.set('filter', filters.join(' and '));
+
+  const res = await methodApi(`/${DEST_TABLE}?${params.toString()}`);
+  const data = (await res.json()) as { value: ClassificationRow[] };
+  return data.value;
+}
+
+// Drill into a specific account. Either by AccountRecordID (preferred, exact)
+// or by account_friendly_name (substring match — useful when an operator only
+// remembers the company name).
+export interface GetClassificationForAccountInput {
+  account_record_id?: number;
+  account_friendly_name?: string;     // substring (case-insensitive)
+}
+
+export async function getClassificationForAccount(
+  input: GetClassificationForAccountInput,
+): Promise<{ classification: ClassificationRow | null; account: MethodAccount | null }> {
+  let resolvedAccountId = input.account_record_id;
+
+  // If only friendly name passed, resolve it first.
+  if (!resolvedAccountId && input.account_friendly_name) {
+    const safe = input.account_friendly_name.replace(/'/g, "''");
+    const params = new URLSearchParams({
+      select: 'RecordID,AccountFriendlyName',
+      filter: `contains(tolower(AccountFriendlyName), '${safe.toLowerCase()}')`,
+      top: '1',
+    });
+    const lookup = await methodApi(`/CustomerMethodAccount?${params.toString()}`);
+    const data = (await lookup.json()) as { value: Array<{ RecordID: number }> };
+    if (data.value.length === 0) return { classification: null, account: null };
+    resolvedAccountId = data.value[0].RecordID;
+  }
+
+  if (!resolvedAccountId) {
+    throw new Error('Either account_record_id or account_friendly_name must be provided');
+  }
+
+  // Fetch the account context
+  const [accountResult] = await getAccountsByIds([resolvedAccountId]);
+
+  // Fetch the classification (if any)
+  const classParams = new URLSearchParams({
+    select: CLASSIFICATION_SELECT_FIELDS.join(','),
+    filter: `AccountRecordID eq ${resolvedAccountId}`,
+    top: '1',
+  });
+  const classRes = await methodApi(`/${DEST_TABLE}?${classParams.toString()}`);
+  const classData = (await classRes.json()) as { value: ClassificationRow[] };
+
+  return {
+    classification: classData.value[0] ?? null,
+    account: accountResult ?? null,
+  };
+}
+
+// Toggle NeedsReview on an existing classification row. Identified by
+// AccountRecordID (the natural key from the operator's perspective).
+export interface MarkClassificationReviewedInput {
+  account_record_id: number;
+  needs_review: boolean;        // true to flag, false to confirm-reviewed
+}
+
+export async function markClassificationReviewed(
+  input: MarkClassificationReviewedInput,
+): Promise<{ success: true; classification_record_id: number; needs_review: boolean }> {
+  // Lookup the classification row
+  const lookupParams = new URLSearchParams({
+    select: 'RecordID',
+    filter: `AccountRecordID eq ${input.account_record_id}`,
+    top: '1',
+  });
+  const lookupRes = await methodApi(`/${DEST_TABLE}?${lookupParams.toString()}`);
+  const lookup = (await lookupRes.json()) as { value: Array<{ RecordID: number }> };
+  if (lookup.value.length === 0) {
+    throw new Error(`No classification found for AccountRecordID ${input.account_record_id}`);
+  }
+  const rid = lookup.value[0].RecordID;
+
+  await methodApi(`/${DEST_TABLE}/${rid}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ NeedsReview: input.needs_review }),
+  });
+
+  return {
+    success: true,
+    classification_record_id: rid,
+    needs_review: input.needs_review,
+  };
+}
+
 // Targeted lookup: fetch full data for a specific list of RecordIDs.
 // Does NOT apply the internal-account or active-paying filter — caller asked
 // for these specific IDs and gets exactly those rows back. Used for drift
