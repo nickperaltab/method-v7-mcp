@@ -151,6 +151,20 @@ export async function getAccountsByIds(ids: number[]): Promise<MethodAccount[]> 
   return out;
 }
 
+// OperatingModel — orthogonal classification dimension. See V7-Pipeline-Spec §15.
+export const OPERATING_MODELS = [
+  'B2B_Producer',
+  'B2B_Distributor',
+  'DTC_Producer',
+  'Hybrid_Producer',
+  'Pure_Retailer',
+  'Service_Only',
+  'Service_With_Products',
+  'Project_Services',
+  'Hospitality',
+] as const;
+export type OperatingModel = typeof OPERATING_MODELS[number];
+
 export interface V7ClassificationInput {
   account_record_id: number;
   l1: string;
@@ -165,6 +179,7 @@ export interface V7ClassificationInput {
   short_reasoning?: string;
   confidence_reason?: string;
   evidence_urls?: string;
+  operating_model?: OperatingModel;
 }
 
 export interface WriteV7Result {
@@ -208,6 +223,7 @@ export async function writeV7Classification(input: V7ClassificationInput): Promi
   if (input.short_reasoning) body.ShortReasoning = input.short_reasoning;
   if (input.confidence_reason) body.ConfidenceReason = input.confidence_reason;
   if (input.evidence_urls) body.EvidenceUrls = input.evidence_urls;
+  if (input.operating_model) body.OperatingModel = input.operating_model;
 
   // UPSERT: enforce one-classification-per-account at the application layer.
   // (Method's Link field type doesn't expose Required/Unique flags, so we

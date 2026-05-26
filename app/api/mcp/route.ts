@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   getAccountsByIds,
   getAccountsNeedingClassification,
+  OPERATING_MODELS,
   writeV7Classification,
 } from '../../../src/methodApi';
 
@@ -123,6 +124,10 @@ const handler = createMcpHandler(
           .max(1000)
           .optional()
           .describe('Comma-separated URLs of evidence (websites, BBB pages, LinkedIn, etc.)'),
+        operating_model: z
+          .enum(OPERATING_MODELS)
+          .optional()
+          .describe('Operating model — orthogonal classification dimension capturing HOW the account goes to market. One of: B2B_Producer | B2B_Distributor | DTC_Producer | Hybrid_Producer | Pure_Retailer | Service_Only | Service_With_Products | Project_Services | Hospitality. See V7-Pipeline-Spec §15 for definitions and tiebreakers.'),
       },
       async (args) => {
         const result = await writeV7Classification(args);
