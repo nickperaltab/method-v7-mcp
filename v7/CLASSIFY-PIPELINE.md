@@ -158,6 +158,31 @@ Skip mapping for vague self-selected values: `Consulting and Professional Servic
 ### 1f. Validate the (L1, L2, L3) tuple
 Confirm the tuple exists in the valid combos set you parsed in 0a. If L3 is valid but L1/L2 are wrong, fix using the L3 lookup dict.
 
+### 1f-bis. Pick the OperatingModel — second dimension, orthogonal to L1
+
+V7 L1/L2/L3 captures **industry identity** (what they are). OperatingModel captures **how they go to market** (B2B-only vs DTC vs hybrid vs service). Both are required.
+
+Pick exactly ONE value from this controlled vocabulary:
+
+| Value | When to pick |
+|---|---|
+| `B2B_Producer` | Makes products for businesses, no consumer-facing store |
+| `B2B_Distributor` | Resells to businesses, doesn't produce |
+| `DTC_Producer` | Makes + sells direct to consumers via own site (storefront test passes; you're the manufacturer-brand) |
+| `Hybrid_Producer` | Makes + sells through BOTH own DTC channel AND B2B/wholesale partners visibly |
+| `Pure_Retailer` | Sells consumer goods, doesn't produce them (storefront test passes; no manufacturing) |
+| `Service_Only` | Pure service business, no product revenue |
+| `Service_With_Products` | Service business that ALSO sells non-trivial parts/equipment (HVAC + parts counter, repair shop + consignment sales) |
+| `Project_Services` | Project-based delivery — defined start/end, deliverable-based (construction, A&E, agencies) |
+
+**Tiebreakers:**
+- DTC vs Pure_Retailer hinges on production. Make it → DTC_Producer. Resell only → Pure_Retailer.
+- Service_Only vs Service_With_Products hinges on whether product revenue is non-trivial. Plumber selling occasional faucet → Service_Only. Plumber with a parts counter → Service_With_Products.
+- Hybrid_Producer requires BOTH channels visibly active. Default to DTC_Producer if B2B is incidental.
+- Project_Services overrides Service_Only when delivery is project-based with defined deliverables.
+
+If the L1 is `UNCLASSIFIABLE` or the website is too thin, pick the closest fit and let the low confidence + review flag carry the uncertainty. Do not invent values outside the 8 above.
+
 ### 1g. Compute final confidence
 ```
 final_confidence = 0.60 * ai_confidence + 0.25 * source_weight + 0.15 * content_factor
@@ -200,7 +225,7 @@ Call MCP tool `write_v7_classification` with ALL 13 fields populated where you h
 - `needs_review` — boolean
 - `content_source` — which source drove the classification (`web_fetch`, `clay`, `bbb_search`, etc.)
 - `business_description` — 1–2 sentence summary of what the business does
-- `short_reasoning` — one sentence on why this L1/L2/L3
+- `short_reasoning` — **MUST start with the OperatingModel prefix**, then one sentence on why this L1/L2/L3. Format: `Operating model: <Value>. <reasoning>`. Example: `Operating model: DTC_Producer. Manufactures wristbands with UK Made lines — production signals win over print-shop framing.` (See V7-Pipeline-Spec §15 for the controlled vocabulary and rationale.)
 - `confidence_reason` — one sentence explaining the confidence number
 - `evidence_urls` — comma-separated URLs of sources used (Clay calls aren't URLs; for web sources include the actual URLs)
 
