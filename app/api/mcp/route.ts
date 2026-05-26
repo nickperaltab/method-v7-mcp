@@ -96,7 +96,7 @@ const handler = createMcpHandler(
       'Drill into the classification for a specific account. Pass either the AccountRecordID (preferred — exact match) or the AccountFriendlyName (substring, case-insensitive — useful when you only remember the company name). Returns both the classification and the source account row for context.',
       {
         account_record_id: z.number().int().positive().optional().describe('The CustomerMethodAccount RecordID (preferred)'),
-        account_friendly_name: z.string().optional().describe('Substring of AccountFriendlyName (case-insensitive). First match wins.'),
+        account_friendly_name: z.string().optional().describe('Substring of AccountFriendlyName (case-SENSITIVE — Method\'s OData doesn\'t support tolower). First match wins. If you only know the name in mixed case, try the most likely capitalization.'),
       },
       async (args) => {
         const result = await getClassificationForAccount(args);

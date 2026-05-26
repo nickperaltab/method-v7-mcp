@@ -219,11 +219,12 @@ export async function getClassificationForAccount(
   let resolvedAccountId = input.account_record_id;
 
   // If only friendly name passed, resolve it first.
+  // Note: Method's OData doesn't support tolower() — match is case-sensitive.
   if (!resolvedAccountId && input.account_friendly_name) {
     const safe = input.account_friendly_name.replace(/'/g, "''");
     const params = new URLSearchParams({
       select: 'RecordID,AccountFriendlyName',
-      filter: `contains(tolower(AccountFriendlyName), '${safe.toLowerCase()}')`,
+      filter: `contains(AccountFriendlyName, '${safe}')`,
       top: '1',
     });
     const lookup = await methodApi(`/CustomerMethodAccount?${params.toString()}`);
