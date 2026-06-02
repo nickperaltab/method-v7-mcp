@@ -43,9 +43,16 @@ export interface MethodAccount {
 // Substring patterns that identify Method-internal accounts via the friendly name.
 // "test" is intentionally NOT in this list — a customer trial named "Test Kitchen LLC"
 // is a real account. Method-curated test accounts are caught by IsTestAccount=true.
+//
+// Patterns added 2026-06-02 after trial-batch surfaced new internal naming:
+//   - methodtest/methodtesting/methodint/methodyuri — Method internal test families
+//   - appdirect — AppDirect partnership test accounts
+//   - qaco/qadev/qatenant — generic QA-named accounts
 const INTERNAL_NAME_PATTERNS = [
   'template', 'qbo', 'restore', 'paid', 'demo',
   'alocet', 'methodappstore',
+  'methodtest', 'methodint', 'methodyuri',
+  'appdirect', 'qaco', 'qadev', 'qatenant',
 ];
 
 function isInternalAccount(name: string): boolean {
