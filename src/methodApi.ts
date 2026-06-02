@@ -48,11 +48,20 @@ export interface MethodAccount {
 //   - methodtest/methodtesting/methodint/methodyuri — Method internal test families
 //   - appdirect — AppDirect partnership test accounts
 //   - qaco/qadev/qatenant — generic QA-named accounts
+// Patterns added 2026-06-02 (round 2) after contacts-recovery surfaced 125 more leakers:
+//   - tenant — day2tenant, dma1tenant, greatnewtenant, etc.
+//   - dma — Data Miner Activity test family (dma1tenant, dmaff1, dmasync1)
+//   - fabrikam — classic Microsoft test company name used in Method demos
+//   - sugarshack — "Hamilton Sugar Shack" demo family
+//   - errolsorry / erroltest — Method employee accidental test accounts
+//   - dbtest / ethostest — explicit-named test accounts
 const INTERNAL_NAME_PATTERNS = [
   'template', 'qbo', 'restore', 'paid', 'demo',
   'alocet', 'methodappstore',
   'methodtest', 'methodint', 'methodyuri',
   'appdirect', 'qaco', 'qadev', 'qatenant',
+  'tenant', 'dma', 'fabrikam', 'sugarshack',
+  'errolsorry', 'erroltest', 'dbtest', 'ethostest',
 ];
 
 function isInternalAccount(name: string): boolean {
