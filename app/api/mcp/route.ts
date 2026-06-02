@@ -8,6 +8,7 @@ import {
   getAccountsByIds,
   getAccountsNeedingClassification,
   getClassificationForAccount,
+  getContactsForAccount,
   getRecentClassifications,
   markClassificationReviewed,
   OPERATING_MODELS,
@@ -65,6 +66,29 @@ const handler = createMcpHandler(
             {
               type: 'text',
               text: JSON.stringify({ count: accounts.length, accounts }, null, 2),
+            },
+          ],
+        };
+      },
+    );
+
+    server.tool(
+      'get_contacts_for_account',
+      'Pull up to 20 contacts linked to an account via Entity_RecordID. Implements Step 1a-bis of the V7 classification pipeline: when the primary CustomerEmail is freemail (gmail/yahoo/etc.), partner-managed (DeveloperCompanyName set), or Method-internal (method.me/methodintegration.com), use this tool to find an alternate contact whose email domain reveals the real customer business. The caller applies the rule "keep the first email whose domain is NOT freemail, method.me, methodintegration.com, OR the primary account email domain."',
+      {
+        account_record_id: z
+          .number()
+          .int()
+          .positive()
+          .describe('CustomerMethodAccount RecordID. Maps to Contacts.Entity_RecordID.'),
+      },
+      async ({ account_record_id }) => {
+        const contacts = await getContactsForAccount(account_record_id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ count: contacts.length, contacts }, null, 2),
             },
           ],
         };

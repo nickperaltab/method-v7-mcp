@@ -55,6 +55,8 @@ export interface MethodAccount {
 //   - sugarshack — "Hamilton Sugar Shack" demo family
 //   - errolsorry / erroltest — Method employee accidental test accounts
 //   - dbtest / ethostest — explicit-named test accounts
+// Pattern added 2026-06-02 (round 3) after May-paying-gap batch surfaced "BioPhotas Sandbox":
+//   - sandbox — staging/test instances of real customer accounts
 const INTERNAL_NAME_PATTERNS = [
   'template', 'qbo', 'restore', 'paid', 'demo',
   'alocet', 'methodappstore',
@@ -62,6 +64,7 @@ const INTERNAL_NAME_PATTERNS = [
   'appdirect', 'qaco', 'qadev', 'qatenant',
   'tenant', 'dma', 'fabrikam', 'sugarshack',
   'errolsorry', 'erroltest', 'dbtest', 'ethostest',
+  'sandbox',
 ];
 
 function isInternalAccount(name: string): boolean {
@@ -330,6 +333,30 @@ export async function getAccountsByIds(ids: number[]): Promise<MethodAccount[]> 
     out.push(...data.value);
   }
   return out;
+}
+
+// Step 1a-bis support: pull contacts for an account so the classifier can
+// recover the real customer domain when the primary CustomerEmail is freemail,
+// partner-managed, or Method-internal. Pipeline rule lives in
+// v7/CLASSIFY-PIPELINE.md §1a-bis — this tool just returns raw contacts;
+// callers apply the "first non-freemail, non-Method, non-primary-domain" rule.
+export interface Contact {
+  RecordID: number;
+  Email?: string;
+  CompanyName?: string;
+  FirstName?: string;
+  LastName?: string;
+}
+
+export async function getContactsForAccount(accountRecordId: number): Promise<Contact[]> {
+  const params = new URLSearchParams({
+    select: 'RecordID,Email,CompanyName,FirstName,LastName',
+    filter: `Entity_RecordID eq ${accountRecordId}`,
+    top: '20',
+  });
+  const res = await methodApi(`/Contacts?${params.toString()}`);
+  const data = (await res.json()) as { value: Contact[] };
+  return data.value;
 }
 
 // OperatingModel — orthogonal classification dimension. See V7-Pipeline-Spec §15.
