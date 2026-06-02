@@ -65,6 +65,30 @@ Before any external enrichment, read what Method already knows about the account
 - Note employee count and revenue range — these constrain plausible classifications (e.g., a 500-employee "marketing agency" is probably a real PBS firm, not a freelancer).
 - Use email domain to decide enrichment path (see 1c).
 
+### 1a-bis. Alternate contacts lookup (NEW — recover real customer domain)
+
+When the primary `CustomerEmail` is one of:
+- Freemail (`gmail.com`, `yahoo.com`, `hotmail.com`, `outlook.com`, `aol.com`, `icloud.com`, `me.com`, `live.com`, `protonmail.com`, `mailinator.com`)
+- Partner-managed (`DeveloperCompanyName` set to a non-Method partner)
+- Method-internal (`method.me`, `methodintegration.com`)
+
+…query the `Contacts` table for alternate emails:
+
+```python
+qs = urllib.parse.urlencode({
+    'select': 'RecordID,Email,CompanyName,FirstName,LastName',
+    'filter': f'Entity_RecordID eq {account_record_id}',
+    'top': '20',
+}, quote_via=urllib.parse.quote)
+contacts = method_get(f'/Contacts?{qs}')
+```
+
+For each contact's email, extract the domain. **Keep the first domain that is NOT in:** freemail list, method.me, methodintegration.com, OR the primary account's email domain.
+
+If a customer-looking domain is found → use it as the source for the WebFetch waterfall (Path A). Mark `content_source = 'contact_lookup'` if this becomes the primary classification signal.
+
+If no usable alternate contact → fall through to Path B (freemail/partner) waterfall as before.
+
 ### 1b. Extract email domain & choose enrichment path
 Parse `CustomerEmail`. Determine `email_domain`. If the domain is a freemail provider (`gmail.com`, `yahoo.com`, `hotmail.com`, `outlook.com`, `aol.com`, `icloud.com`, `protonmail.com`, `zoho.com`, plus regional variants like `.co.uk`, `.ca`), classify the account as **freemail** and use Path B in 1c.
 
