@@ -36,7 +36,11 @@ export interface MethodAccount {
   Sector?: string;
   CustDatCountOfEmployees?: number;
   CustDatAnnualSales?: number;
-  DeveloperCompanyName?: string | null;  // If set to a non-Method partner, account is partner-managed — see §14.3
+  CustDatCountOfCustomers?: number;     // B2B vs B2C disambiguator — see CLASSIFY-PIPELINE.md §1a
+  IndustryCode?: string;                // QB-reported NAICS code ('999999' = unclassified sentinel)
+  QBOIndustryType?: string;             // QB's structured industry label (more reliable than CustDatIndustry)
+  SignupCountry?: string;               // Enables country-aware enrichment routing
+  DeveloperCompanyName?: string | null; // If set to a non-Method partner, account is partner-managed — see §14.3
   IsActive?: boolean;
 }
 
@@ -85,6 +89,10 @@ const ACCOUNT_SELECT_FIELDS = [
   'Sector',
   'CustDatCountOfEmployees',
   'CustDatAnnualSales',
+  'CustDatCountOfCustomers',
+  'IndustryCode',
+  'QBOIndustryType',
+  'SignupCountry',
   'DeveloperCompanyName',
   'IsActive',
 ];

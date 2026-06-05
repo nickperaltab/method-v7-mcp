@@ -55,15 +55,23 @@ Before any external enrichment, read what Method already knows about the account
 | `Vertical` (self-selected) | Customer's own industry pick. If set and meaningful (not null, not "Other"), this is a strong signal. |
 | `CustDatIndustry` | Often blank, but when set adds a second self-classification. |
 | `Sector` | Same family as CustDatIndustry. |
+| `QBOIndustryType` | **(NEW prior, added 2026-06-05)** QuickBooks Online's structured industry label (e.g., "Education and Training", "Department stores"). More reliable than free-text `CustDatIndustry`. When populated, treat as strong evidence. |
+| `IndustryCode` | **(NEW prior)** QB-reported NAICS code as string. `'999999'` is the "unclassified" sentinel — ignore. Other values (e.g., `'61'` = Educational Services) are direct NAICS codes — use to anchor L1/L2 pick. |
 | `CustDatCountOfEmployees` | **Scale signal.** 1 employee + Etsy presence → Artisan. 500 employees → Industrial Mfg. |
 | `CustDatAnnualSales` | Scale signal. Differentiates small operator from established business. |
+| `CustDatCountOfCustomers` | **(NEW prior) Customer-base scale + B2B vs B2C disambiguator.** A QB business with 2 customers is almost certainly a B2B specialist (consultant, engineering firm, contractor with corporate accounts). 86+ customers suggests B2C retail, broad services, or hospitality. Use as a tiebreaker when storefront/website signals are ambiguous. |
+| `SignupCountry` / `BillAddressCountry` | **(NEW prior)** Country signal. Use to route the enrichment waterfall: US/CA defaults to existing sources; non-US accounts should prefer country-specific business registries (UK Companies House, Aus ABN lookup, etc.) before US-centric WebSearch. |
 | `AccountFriendlyName` | Identifier + sometimes contains industry clues. |
 | `CustomerEmail` | Domain → potential website. Personal name → may indicate solo operator. |
 
 **How to use them:**
+- **`QBOIndustryType` is the strongest prior** when populated. Use it to lock L1/L2 first, then use enrichment to refine L3.
+- If `IndustryCode != '999999'` and looks like a NAICS code, map to V7 L1/L2 directly (consult NAICS → V7 mapping table at end of §1a if available).
 - If `Vertical` is meaningfully set (not null/Other/General), bias toward that L1 and use enrichment to refine L2/L3.
+- Use `CustDatCountOfCustomers` as a B2B-vs-B2C tiebreaker (low count = B2B specialist, high count = B2C or broad services).
 - Note employee count and revenue range — these constrain plausible classifications (e.g., a 500-employee "marketing agency" is probably a real PBS firm, not a freelancer).
 - Use email domain to decide enrichment path (see 1c).
+- If `SignupCountry != 'United States' && != 'Canada'`, prefer country-specific sources in the §1d waterfall.
 
 ### 1a-bis. Alternate contacts lookup (NEW — recover real customer domain)
 
