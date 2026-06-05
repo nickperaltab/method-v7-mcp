@@ -89,6 +89,16 @@ If a customer-looking domain is found → use it as the source for the WebFetch 
 
 If no usable alternate contact → fall through to Path B (freemail/partner) waterfall as before.
 
+#### Refinements (added 2026-06-03 from retry-batch findings)
+
+**CompanyName fallback when Email is empty.** Some Contacts rows have `Email = ""` but a populated `CompanyName` (e.g., RID 26250 surfaced `CompanyName: "Donna Santos Studio"` with no email). In this case, use `CompanyName` as the search seed for Step 1d.3 (WebSearch company + city) directly — skip the domain extraction.
+
+**Parked-domain fallback.** If the contact-discovered domain WebFetches to a parking page (GoDaddy, HugeDomains, "for sale", "this site is under construction"), the customer business often still exists — only the website is gone. Drop straight to Step 1d.3 (WebSearch the company name) using the **domain root** (e.g., `dynamicroofingsolutions`) as the search query. This saved RIDs 35718 and 39982 in the 2026-06-03 retry batch.
+
+**Mismatch detection (preserve UNCLASSIFIABLE).** Before chasing a contact-discovered domain, sanity-check it against the account name. If the alternate contact's `CompanyName` has **zero token overlap** with the account's `AccountFriendlyName` AND the contact's email is freemail, treat the contact as untrusted — preserve UNCLASSIFIABLE rather than classify based on a likely-wrong domain. Example: RID 143087 (`TNHH Trademark Sai Gon`, a Vietnamese LLC) had an alternate contact at a California behavioral-health clinic; the agent correctly flagged the mismatch and preserved UNCLASSIFIABLE instead of writing a wrong-but-confident label.
+
+**ISV-partner test pattern.** Accounts whose primary `CustomerEmail` is at an ISV-partner domain (`rightnetworks.com`, others TBD) AND have zero alternate Contacts are likely partner-test artifacts. Preserve UNCLASSIFIABLE — do not WebSearch the partner's domain. (Code-side §14 filter expansion is tracked separately.)
+
 ### 1b. Extract email domain & choose enrichment path
 Parse `CustomerEmail`. Determine `email_domain`. If the domain is a freemail provider (`gmail.com`, `yahoo.com`, `hotmail.com`, `outlook.com`, `aol.com`, `icloud.com`, `protonmail.com`, `zoho.com`, plus regional variants like `.co.uk`, `.ca`), classify the account as **freemail** and use Path B in 1c.
 
