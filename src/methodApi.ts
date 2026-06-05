@@ -408,6 +408,35 @@ export interface WriteV7Result {
 // Hardcoded destination — never parameterize this.
 const DEST_TABLE = 'CustomerIndustryClassification';
 
+// P4 enforcement: L3 values that are forbidden as catch-all fallbacks.
+// Per V7-Pipeline-Spec Principle 4 + CLASSIFY-PIPELINE.md §1e top-of-section rule.
+// Added 2026-06-05 after audit found 190 mis-labeled accounts using these as defaults
+// when the AI should have written UNCLASSIFIABLE.
+const FORBIDDEN_CATCHALL_L3 = new Set<string>([
+  'Strategy & Management Consulting',
+  'General Wholesale & Distribution',
+]);
+
+// Block writes of forbidden L3s when evidence is weak.
+// Returns null if allowed; returns error message if blocked.
+function checkCatchallRejection(input: V7ClassificationInput): string | null {
+  if (!FORBIDDEN_CATCHALL_L3.has(input.l3)) return null;
+  const conf = input.confidence ?? 0;
+  const source = (input.content_source ?? '').toLowerCase();
+  const hasWeakSource = source === 'name_only' || source === '';
+  const hasWeakConfidence = conf < 0.65;
+  if (hasWeakSource || hasWeakConfidence) {
+    return (
+      `Refusing to write forbidden catch-all L3 "${input.l3}" with weak evidence ` +
+      `(content_source="${source || 'unset'}", confidence=${conf}). ` +
+      `Per CLASSIFY-PIPELINE.md §1e P4 rule: write l1=l2=l3=UNCLASSIFIABLE instead. ` +
+      `If this account genuinely IS ${input.l3.toLowerCase()}, re-classify with ` +
+      `web_fetch / search_verified / bbb_search evidence and confidence >= 0.65.`
+    );
+  }
+  return null;
+}
+
 // Normalize the caller-supplied timestamp.
 // - Missing → server time (now)
 // - Date-only "YYYY-MM-DD" → server time (avoids the midnight bug)
@@ -422,6 +451,10 @@ function normalizeClassifiedAt(input?: string): string {
 }
 
 export async function writeV7Classification(input: V7ClassificationInput): Promise<WriteV7Result> {
+  // P4 enforcement: reject catch-all L3s with weak evidence before any API call.
+  const rejection = checkCatchallRejection(input);
+  if (rejection) throw new Error(rejection);
+
   // Build the request body — only include fields the caller provided.
   // Method field names match what the user configured in the Tables & Fields UI.
   const body: Record<string, unknown> = {

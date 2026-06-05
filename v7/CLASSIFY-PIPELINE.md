@@ -150,6 +150,26 @@ After running the web sources for the relevant path, ask: **"Do I have enough si
 This adaptive use of Clay keeps the cost down while ensuring we have a safety net for accounts with weak web presence.
 
 ### 1e. Classify in a single reasoning pass
+
+#### ⛔ HARD RULE — FORBIDDEN CATCH-ALL L3 LABELS ⛔
+
+The following L3 values are **PROHIBITED** unless you have explicit positive evidence:
+
+| Forbidden L3 | Evidence required to use it |
+|---|---|
+| `Strategy & Management Consulting` | Website lists named partners, MBA-pedigreed bios, retainer engagements with named clients, or explicit "strategy consulting" / "management consulting" branding |
+| `General Wholesale & Distribution` | Warehouse / distribution operation visible, multiple unrelated product lines, OR explicit "we distribute X" branding |
+
+**If you don't have that evidence — write `l1 = l2 = l3 = UNCLASSIFIABLE` instead.**
+
+These labels were the #1 source of false classifications in the May/June batches (190 mislabeled accounts). Most "Strategy & Management Consulting" labels were the AI guessing because a personal-name LLC had a generic website. That's exactly what Principle 4 forbids.
+
+**The server enforces this.** `write_v7_classification` will return a 400 error if you try to write these L3 values with `content_source = name_only` OR `confidence < 0.65`. Don't waste a roundtrip — pick UNCLASSIFIABLE up front when evidence is thin.
+
+The same "no catch-all" judgment applies to any `Other-*` or `General-*` L3 — but those are sometimes legitimate within a known category (e.g., "Other Specialty Construction" when you know it's construction but not the trade). Use judgment; the two L3s above are absolutely forbidden without positive evidence.
+
+---
+
 With the Method-internal priors (1a), enrichment data (1d), the taxonomy (incl. disambiguation_notes), and the 4 principles in your context:
 
 1. **What does this business do?** Synthesize all signals into a business description (1–2 sentences).
@@ -164,7 +184,7 @@ With the Method-internal priors (1a), enrichment data (1d), the taxonomy (incl. 
    - P1: Did you classify by identity, not activity?
    - P2: If reseller with mixed channels, did you apply the storefront test?
    - P3: Is there positive evidence? (Distribution needs reselling evidence; Manufacturing needs production evidence.)
-   - P4: Did you avoid catch-all defaults? If you picked General/Other/Strategy & Consulting, reconsider — only use them with explicit evidence.
+   - **P4 (server-enforced): Did you avoid forbidden catch-all L3s?** If you picked `Strategy & Management Consulting` or `General Wholesale & Distribution` with weak evidence, the server WILL reject — write UNCLASSIFIABLE instead (see the ⛔ callout at the top of §1e).
 6. **Set `ai_confidence` honestly** using the scale below.
 7. **UNCLASSIFIABLE check:** if `ai_confidence < 0.50` AND no usable data, set L1/L2/L3 = `UNCLASSIFIABLE`.
 
