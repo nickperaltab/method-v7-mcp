@@ -1,6 +1,8 @@
 // MCP server route — Vercel + Next.js + mcp-handler pattern.
 // Tool implementations live in src/methodApi.ts (unchanged).
-// This file just wires those implementations into the MCP handler.
+// This file wires those implementations into the MCP handler and gates the
+// HTTP transport with Google OAuth (RFC 9728 Protected Resource Metadata).
+// Auth pattern mirrors method-consultant-mcp.
 
 import { createMcpHandler } from 'mcp-handler';
 import { z } from 'zod';
@@ -14,6 +16,55 @@ import {
   OPERATING_MODELS,
   writeV7Classification,
 } from '../../../src/methodApi';
+import { verifyHttpAuth, type Verifier } from '../../../src/auth';
+import { verifyGoogleToken } from '../../../src/platform/googleAuth';
+
+// Boot-time env read. Throws on cold start if any required var is missing.
+function requiredEnv(name: string): string {
+  const v = process.env[name];
+  if (!v || v.trim() === '') {
+    throw new Error(`Required env var ${name} is not set`);
+  }
+  return v;
+}
+
+function parseAllowedEmails(raw: string | undefined): Set<string> | undefined {
+  if (!raw || raw.trim() === '') return undefined;
+  const set = new Set<string>();
+  for (const part of raw.split(',')) {
+    const email = part.trim().toLowerCase();
+    if (email) set.add(email);
+  }
+  return set.size > 0 ? set : undefined;
+}
+
+const GOOGLE_OAUTH_CLIENT_ID = requiredEnv('GOOGLE_OAUTH_CLIENT_ID');
+const ALLOWED_EMAIL_DOMAIN = requiredEnv('ALLOWED_EMAIL_DOMAIN');
+const ALLOWED_EMAILS = parseAllowedEmails(process.env['ALLOWED_EMAILS']);
+
+const googleVerifier: Verifier = (token) =>
+  verifyGoogleToken(token, {
+    expectedAudience: GOOGLE_OAUTH_CLIENT_ID,
+    allowedDomain: ALLOWED_EMAIL_DOMAIN,
+    allowedEmails: ALLOWED_EMAILS,
+  });
+
+async function authGate(req: Request): Promise<Response | null> {
+  const r = await verifyHttpAuth(req.headers.get('authorization'), googleVerifier);
+  if (r.ok) return null;
+  // RFC 9728: point clients at the metadata document so they can discover
+  // Google as the authorization server. claude.ai's connector uses this header
+  // to trigger OAuth discovery when no bearer is present.
+  const base = new URL(req.url).origin;
+  const metadataUrl = `${base}/.well-known/oauth-protected-resource`;
+  return new Response(JSON.stringify({ error: 'unauthorized' }), {
+    status: 401,
+    headers: {
+      'content-type': 'application/json',
+      'www-authenticate': `Bearer realm="${base}/api/mcp", resource_metadata="${metadataUrl}"`,
+    },
+  });
+}
 
 const handler = createMcpHandler(
   (server) => {
@@ -218,4 +269,20 @@ const handler = createMcpHandler(
   { basePath: '/api' },
 );
 
-export { handler as GET, handler as POST, handler as DELETE };
+async function authedHandler(req: Request): Promise<Response> {
+  const blocked = await authGate(req);
+  if (blocked) return blocked;
+  return handler(req);
+}
+
+// CORS preflight: claude.ai connector is server-to-server, but we export
+// OPTIONS explicitly and gate it the same as everything else. Fail closed.
+export async function OPTIONS(req: Request): Promise<Response> {
+  const blocked = await authGate(req);
+  if (blocked) return blocked;
+  return new Response(null, { status: 204 });
+}
+
+export { authedHandler as GET, authedHandler as POST, authedHandler as DELETE };
+
+export const maxDuration = 30;
