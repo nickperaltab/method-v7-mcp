@@ -10,7 +10,7 @@ export type Verifier = (token: string) => Promise<GoogleAuthResult>;
 
 export type HttpAuthResult =
   | { ok: true; email: string }
-  | { ok: false; reason: 'missing' | 'malformed' | 'invalid' };
+  | { ok: false; reason: string };
 
 export async function verifyHttpAuth(
   headerValue: string | undefined | null,
@@ -31,5 +31,5 @@ export async function verifyHttpAuth(
   if (g.ok) {
     return { ok: true, email: g.email };
   }
-  return { ok: false, reason: 'invalid' };
+  return { ok: false, reason: g.reason };
 }
