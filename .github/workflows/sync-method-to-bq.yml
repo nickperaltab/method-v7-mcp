@@ -1,0 +1,187 @@
+name: sync-method-to-bq
+
+# Method is the source of truth for V7 classifications (write_v7_classification
+# tool POSTs to /CustomerIndustryClassification). BigQuery's
+# v7_classification.account_labels is a derived analytics mirror, MERGE-updated
+# from Method. Without this scheduled job, BQ drifts. (It drifted 7 days
+# between Jun 2 and Jun 9 — caught up manually on Jun 9.)
+#
+# Triggers daily at 04:07 Toronto / 08:07 UTC (after the v7 classification
+# routine fires at 03:00 ET). Also runnable manually via the Actions tab.
+
+on:
+  schedule:
+    - cron: '7 8 * * *' # 08:07 UTC daily (= 04:07 ET / 03:07 PT)
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install google-cloud-bigquery==3.25.0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Run sync
+        env:
+          METHOD_API_KEY: ${{ secrets.METHOD_API_KEY }}
+          METHOD_API_BASE_URL: https://rest.method.me/api/v1/tables
+        run: |
+          # Inline the sync script from the Obsidian vault since it's not in this
+          # repo. Copy the relevant logic here so the workflow is self-contained
+          # and deployable from this repo alone. Source script lives at:
+          #   ~/Desktop/Obsidian Vault/Rev Ops System/05-SCRATCH/2026-03-23-classification/sync_method_to_bq.py
+          # Keep both in sync — bring substantive changes back into the vault copy.
+          python3 - <<'PY'
+          import json, os, sys, urllib.parse, urllib.request, uuid
+          from datetime import datetime, timezone
+          from google.cloud import bigquery
+
+          METHOD_KEY = os.environ['METHOD_API_KEY']
+          METHOD_BASE = os.environ.get('METHOD_API_BASE_URL', 'https://rest.method.me/api/v1/tables')
+          BQ_PROJECT = 'project-for-method-dw'
+          BQ_DATASET = 'v7_classification'
+          TABLE_CURRENT = f'{BQ_PROJECT}.{BQ_DATASET}.account_labels'
+          TABLE_HISTORY = f'{BQ_PROJECT}.{BQ_DATASET}.label_history'
+
+          FIELDS = ['RecordID', 'AccountRecordID', 'L1', 'L2', 'L3', 'Confidence',
+                    'Version', 'ClassifiedAt', 'NeedsReview', 'ContentSource',
+                    'BusinessDescription', 'ShortReasoning', 'ConfidenceReason',
+                    'EvidenceUrls', 'OperatingModel']
+          HDR = {'Authorization': f'APIKey {METHOD_KEY}'}
+
+          def get(path, params):
+              qs = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+              with urllib.request.urlopen(urllib.request.Request(f'{METHOD_BASE}{path}?{qs}', headers=HDR), timeout=60) as r:
+                  return json.loads(r.read())
+
+          def fetch_all(path, select, extra=None):
+              out, skip = [], 0
+              while True:
+                  params = {'select': select, 'top': '100', 'skip': str(skip)}
+                  if extra: params.update(extra)
+                  data = get(path, params)
+                  rows = data.get('value', [])
+                  out.extend(rows)
+                  if len(rows) < 100: break
+                  skip += 100
+              return out
+
+          print('Fetching classifications…', flush=True)
+          rows = fetch_all('/CustomerIndustryClassification', ','.join(FIELDS))
+          print(f'  Got {len(rows)} rows', flush=True)
+
+          # Resolve CompanyAccount via /CustomerMethodAccount lookups
+          acct_ids = sorted({r['AccountRecordID'] for r in rows if r.get('AccountRecordID')})
+          print(f'Resolving CompanyAccount for {len(acct_ids)} RIDs…', flush=True)
+          ca_map = {}
+          for i in range(0, len(acct_ids), 50):
+              batch = acct_ids[i:i+50]
+              filt = ' or '.join(f'RecordID eq {x}' for x in batch)
+              data = get('/CustomerMethodAccount', {'select': 'RecordID,CompanyAccount', 'filter': filt, 'top': str(len(batch))})
+              for v in data.get('value', []):
+                  ca_map[v['RecordID']] = v.get('CompanyAccount')
+          print(f'  Resolved {sum(1 for v in ca_map.values() if v)} of {len(acct_ids)}', flush=True)
+
+          snapshot_id = str(uuid.uuid4())
+          now = datetime.now(timezone.utc).isoformat()
+          bq_rows = []
+          for r in rows:
+              arid = r.get('AccountRecordID')
+              if not arid: continue
+              bq_rows.append({
+                  'account_record_id': arid,
+                  'company_account': ca_map.get(arid),
+                  'l1': r.get('L1'), 'l2': r.get('L2'), 'l3': r.get('L3'),
+                  'confidence': r.get('Confidence'),
+                  'operating_model': r.get('OperatingModel'),
+                  'version': r.get('Version'),
+                  'classified_at': r.get('ClassifiedAt'),
+                  'needs_review': r.get('NeedsReview'),
+                  'content_source': r.get('ContentSource'),
+                  'business_description': r.get('BusinessDescription'),
+                  'short_reasoning': r.get('ShortReasoning'),
+                  'confidence_reason': r.get('ConfidenceReason'),
+                  'evidence_urls': r.get('EvidenceUrls'),
+                  'method_record_id': r.get('RecordID'),
+                  'bq_synced_at': now,
+                  'snapshot_id': snapshot_id,
+              })
+          print(f'Built {len(bq_rows)} BQ rows (snapshot {snapshot_id[:8]}…)', flush=True)
+
+          client = bigquery.Client(project=BQ_PROJECT)
+          staging = f'{BQ_PROJECT}.{BQ_DATASET}._staging_{snapshot_id.replace("-", "_")}'
+
+          # Load to staging
+          job = client.load_table_from_json(bq_rows, staging, job_config=bigquery.LoadJobConfig(
+              schema=[
+                  bigquery.SchemaField('account_record_id', 'INTEGER', mode='REQUIRED'),
+                  bigquery.SchemaField('company_account', 'STRING'),
+                  bigquery.SchemaField('l1', 'STRING'), bigquery.SchemaField('l2', 'STRING'), bigquery.SchemaField('l3', 'STRING'),
+                  bigquery.SchemaField('confidence', 'FLOAT'),
+                  bigquery.SchemaField('operating_model', 'STRING'),
+                  bigquery.SchemaField('version', 'STRING'),
+                  bigquery.SchemaField('classified_at', 'TIMESTAMP'),
+                  bigquery.SchemaField('needs_review', 'BOOLEAN'),
+                  bigquery.SchemaField('content_source', 'STRING'),
+                  bigquery.SchemaField('business_description', 'STRING'),
+                  bigquery.SchemaField('short_reasoning', 'STRING'),
+                  bigquery.SchemaField('confidence_reason', 'STRING'),
+                  bigquery.SchemaField('evidence_urls', 'STRING'),
+                  bigquery.SchemaField('method_record_id', 'INTEGER'),
+                  bigquery.SchemaField('bq_synced_at', 'TIMESTAMP'),
+                  bigquery.SchemaField('snapshot_id', 'STRING'),
+              ],
+              write_disposition='WRITE_TRUNCATE',
+          ))
+          job.result()
+          print(f'  Loaded {len(bq_rows)} rows to staging', flush=True)
+
+          # MERGE into account_labels
+          merge_sql = f"""
+          MERGE `{TABLE_CURRENT}` T
+          USING `{staging}` S ON T.account_record_id = S.account_record_id
+          WHEN MATCHED THEN UPDATE SET
+            company_account = S.company_account, l1 = S.l1, l2 = S.l2, l3 = S.l3,
+            confidence = S.confidence, operating_model = S.operating_model,
+            version = S.version, classified_at = S.classified_at,
+            needs_review = S.needs_review, content_source = S.content_source,
+            business_description = S.business_description, short_reasoning = S.short_reasoning,
+            confidence_reason = S.confidence_reason, evidence_urls = S.evidence_urls,
+            method_record_id = S.method_record_id, bq_synced_at = S.bq_synced_at
+          WHEN NOT MATCHED THEN INSERT (
+            account_record_id, company_account, l1, l2, l3, confidence, operating_model,
+            version, classified_at, needs_review, content_source, business_description,
+            short_reasoning, confidence_reason, evidence_urls, method_record_id, bq_synced_at
+          ) VALUES (
+            S.account_record_id, S.company_account, S.l1, S.l2, S.l3, S.confidence, S.operating_model,
+            S.version, S.classified_at, S.needs_review, S.content_source, S.business_description,
+            S.short_reasoning, S.confidence_reason, S.evidence_urls, S.method_record_id, S.bq_synced_at
+          )
+          """
+          merge_job = client.query(merge_sql)
+          merge_job.result()
+          print(f'  MERGED → account_labels (affected: {merge_job.num_dml_affected_rows})', flush=True)
+
+          # Append to history
+          insert_sql = f'INSERT `{TABLE_HISTORY}` SELECT * FROM `{staging}`'
+          insert_job = client.query(insert_sql)
+          insert_job.result()
+          print(f'  INSERT → label_history (rows: {insert_job.num_dml_affected_rows})', flush=True)
+
+          client.delete_table(staging)
+          print(f'✓ Sync complete (snapshot {snapshot_id[:8]}…)', flush=True)
+          PY
