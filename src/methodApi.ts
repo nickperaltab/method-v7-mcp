@@ -61,6 +61,10 @@ export interface MethodAccount {
 //   - dbtest / ethostest — explicit-named test accounts
 // Pattern added 2026-06-02 (round 3) after May-paying-gap batch surfaced "BioPhotas Sandbox":
 //   - sandbox — staging/test instances of real customer accounts
+// Patterns added 2026-06-09 after GRR backfill (rounds 1-3, 1800 RIDs) surfaced recurring CRM-artifact leakers:
+//   - '-old' / '_old' — suffix patterns for superseded accounts (e.g., "Empty Nest Home Services - Old", "service-old")
+//     Substring match: keeps real "Old World Bakery" / "Holdco" type names safe (they don't contain "-old" or "_old")
+//   - 'bptest' — explicit test artifact pattern (chunk 14: "BIG PIPE LLC" with CompanyAccount "bptest")
 const INTERNAL_NAME_PATTERNS = [
   'template', 'qbo', 'restore', 'paid', 'demo',
   'alocet', 'methodappstore',
@@ -69,6 +73,7 @@ const INTERNAL_NAME_PATTERNS = [
   'tenant', 'dma', 'fabrikam', 'sugarshack',
   'errolsorry', 'erroltest', 'dbtest', 'ethostest',
   'sandbox',
+  '-old', '_old', 'bptest',
 ];
 
 function isInternalAccount(name: string): boolean {

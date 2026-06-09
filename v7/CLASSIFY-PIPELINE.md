@@ -52,10 +52,10 @@ Before any external enrichment, read what Method already knows about the account
 
 | Field | What it tells us |
 |---|---|
-| `Vertical` (self-selected) | Customer's own industry pick. If set and meaningful (not null, not "Other"), this is a strong signal. |
+| `Vertical` (self-selected) | Customer's own industry pick. Strong signal when set and meaningful — with two known traps: `"Accounting and Bookkeeping"` accounts are frequently QuickBooks implementation consultants (→ PBS > IT Services & Technology > IT Consulting & Implementation), not bookkeepers; `"Wholesale and distribution services"` often masks manufacturers. Web-verify both. |
 | `CustDatIndustry` | Often blank, but when set adds a second self-classification. |
 | `Sector` | Same family as CustDatIndustry. |
-| `QBOIndustryType` | **(NEW prior, added 2026-06-05)** QuickBooks Online's structured industry label (e.g., "Education and Training", "Department stores"). More reliable than free-text `CustDatIndustry`. When populated, treat as strong evidence. |
+| `QBOIndustryType` | QuickBooks Online's structured industry label. **Reliable when specific** (e.g., "Plumbing/heating/AC contractors", "Religious organizations", "Coffee and tea manufacturing", "Marinas", "Janitorial services", "Offices of CPAs") — trust after a quick web confirm. **Noise when generic** ("Construction", "Manufacturing", "WholesaleDistributionandSales", "GeneralProductbasedBusiness", "OtherNone", "RetailSummary") — do the full web enrichment; generic values are frequently directionally wrong on make-vs-resell. |
 | `IndustryCode` | **(NEW prior)** QB-reported NAICS code as string. `'999999'` is the "unclassified" sentinel — ignore. Other values (e.g., `'61'` = Educational Services) are direct NAICS codes — use to anchor L1/L2 pick. |
 | `CustDatCountOfEmployees` | **Scale signal.** 1 employee + Etsy presence → Artisan. 500 employees → Industrial Mfg. |
 | `CustDatAnnualSales` | Scale signal. Differentiates small operator from established business. |
@@ -65,9 +65,9 @@ Before any external enrichment, read what Method already knows about the account
 | `CustomerEmail` | Domain → potential website. Personal name → may indicate solo operator. |
 
 **How to use them:**
-- **`QBOIndustryType` is the strongest prior** when populated. Use it to lock L1/L2 first, then use enrichment to refine L3.
+- `QBOIndustryType` populated with a **specific** value → strong prior, lock L1/L2 after quick web confirm. Populated with a **generic** value → do the full web enrichment before trusting it.
 - If `IndustryCode != '999999'` and looks like a NAICS code, map to V7 L1/L2 directly (consult NAICS → V7 mapping table at end of §1a if available).
-- If `Vertical` is meaningfully set (not null/Other/General), bias toward that L1 and use enrichment to refine L2/L3.
+- If `Vertical` is meaningfully set (not null/Other/General), bias toward that L1 and use enrichment to refine L2/L3 — except the two traps noted above (Accounting/Bookkeeping → check for QB consultant; Wholesale/distribution → check for manufacturer).
 - Use `CustDatCountOfCustomers` as a B2B-vs-B2C tiebreaker (low count = B2B specialist, high count = B2C or broad services).
 - Note employee count and revenue range — these constrain plausible classifications (e.g., a 500-employee "marketing agency" is probably a real PBS firm, not a freelancer).
 - Use email domain to decide enrichment path (see 1c).

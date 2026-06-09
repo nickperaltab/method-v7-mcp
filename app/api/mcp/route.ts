@@ -53,12 +53,12 @@ const googleVerifier: Verifier = (token) =>
 async function authGate(req: Request): Promise<Response | null> {
   const r = await verifyHttpAuth(req.headers.get('authorization'), googleVerifier);
   if (r.ok) return null;
-  // TEMPORARY: surface the rejection reason in logs + body so we can debug
-  // the Claude.ai connector handshake. Revert to opaque error after fix.
-  console.error('[authGate] rejected:', r.reason, 'header present:', !!req.headers.get('authorization'));
+  // RFC 9728: point clients at the metadata document so they can discover
+  // Google as the authorization server. claude.ai's connector uses this header
+  // to trigger OAuth discovery when no bearer is present.
   const base = new URL(req.url).origin;
   const metadataUrl = `${base}/.well-known/oauth-protected-resource`;
-  return new Response(JSON.stringify({ error: 'unauthorized', reason: r.reason }), {
+  return new Response(JSON.stringify({ error: 'unauthorized' }), {
     status: 401,
     headers: {
       'content-type': 'application/json',

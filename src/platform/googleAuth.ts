@@ -50,7 +50,6 @@ export async function verifyGoogleToken(
   }
   const body = await res.json();
   if (body.aud !== cfg.expectedAudience) {
-    console.error('[googleAuth] audience mismatch — token aud:', body.aud, '| expected:', cfg.expectedAudience);
     return { ok: false, reason: 'audience' };
   }
   if (String(body.email_verified) !== 'true') {
