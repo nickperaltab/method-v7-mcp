@@ -20,12 +20,13 @@ import { verifyHttpAuth, type Verifier } from '../../../src/auth';
 import { verifyGoogleToken } from '../../../src/platform/googleAuth';
 
 // Boot-time env read. Throws on cold start if any required var is missing.
+// .trim() guards against trailing newlines that `echo | vercel env add` introduces.
 function requiredEnv(name: string): string {
   const v = process.env[name];
   if (!v || v.trim() === '') {
     throw new Error(`Required env var ${name} is not set`);
   }
-  return v;
+  return v.trim();
 }
 
 function parseAllowedEmails(raw: string | undefined): Set<string> | undefined {
