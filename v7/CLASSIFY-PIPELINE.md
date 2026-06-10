@@ -118,36 +118,39 @@ If `AccountFriendlyName` contains (case-insensitive): `home watch`, `homewatch`,
 
 ### 1d. Enrichment waterfall (two paths based on email)
 
-**Run sources in order until you have useful business content (≥100 chars of substantive text). Use the FIRST source that yields a clear signal. Clay is a FALLBACK after the web sources — only call it if the web waterfall didn't produce enough signal to classify confidently (e.g., still uncertain at the L2 level after 3 web sources).**
+**Run sources in order until you have useful business content (≥100 chars of substantive text). Use the FIRST source that yields a clear signal.**
+
+**⚠️ Runtime note (2026-06-11):** Claude.ai cloud routines have their WebFetch requests blocked by ~90% of customer sites (Cloudflare-hosted small-business sites blocklist known cloud IPs; returns 403). **Clay is now the primary enrichment source, not the fallback.** WebFetch is still listed below — try it once, but expect failure in cloud sessions and fall through quickly. Local Claude Code sessions (residential IP) can still rely on WebFetch as the highest-fidelity source.
 
 #### Path A — Real email domain (NOT freemail)
 
 | # | Source | content_source label | How |
 |---|---|---|---|
-| 1 | WebFetch the email domain | `web_fetch` | **PRIMARY.** Fetch `https://{email_domain}`. Treat parked/dead domains ("for sale", "coming soon", "under construction") as no content. Customer's own website is the highest-fidelity source. |
-| 2 | WebSearch BBB | `bbb_search` | Search `"{company name} BBB"`. If a BBB result, WebFetch the BBB page. |
-| 3 | WebSearch company + city | `search_verified` / `search_snippet` | Search `"{company name}"` (+city/state if known). If results include a real business website, WebFetch it. LinkedIn/Yelp/Google Maps listings are valid signals. |
-| 4 | WebSearch the email domain | `domain_search` | Catches cached descriptions, press mentions when the site itself is dead. |
-| 5 | **Clay enrichment** | `clay` | **Fallback only when web sources didn't yield enough signal.** Use Clay MCP to enrich the company by name + domain. Clay's best contributions: structured industry tag (LinkedIn-derived), scale signals (employees, revenue), tech stack. |
+| 1 | **Clay enrichment** | `clay` | **PRIMARY.** Call `mcp__claude_ai_Clay__find-and-enrich-company` with company name + email domain. Clay returns structured industry tag (LinkedIn-derived), employee count, revenue band, tech stack — equivalent to a website read for most accounts and works regardless of bot-blocking. |
+| 2 | WebSearch company + city | `search_verified` / `search_snippet` | Search `"{company name}"` (+city/state if known). If results include a real business website, capture the snippet. LinkedIn/Yelp/Google Maps listings are valid signals. |
+| 3 | WebSearch BBB | `bbb_search` | Search `"{company name} BBB"`. If a BBB result appears in search snippets, capture. (Don't WebFetch BBB pages — they're behind Cloudflare too.) |
+| 4 | WebFetch the email domain | `web_fetch` | **Best signal IF it works** (residential-IP sessions). In cloud routines this will mostly return 403 — accept and fall through. When it does succeed, it's the strongest source. |
+| 5 | WebSearch the email domain | `domain_search` | Catches cached descriptions, press mentions when the site itself is dead. |
 | 6 | Name + self-selected only | `name_only` | Last resort. Parse name for clues + Vertical fallback table. |
 
 #### Path B — Freemail email domain (gmail/yahoo/etc.)
 
 | # | Source | content_source label | How |
 |---|---|---|---|
-| 1 | WebSearch BBB | `bbb_search` | Search `"{company name} BBB"`. If a BBB result, WebFetch the BBB page. |
-| 2 | WebSearch company + city | `search_verified` / `search_snippet` | Search `"{company name}"` (+city/state if known). If results include a real business website, WebFetch it. |
-| 3 | **Clay enrichment** | `clay` | **Fallback only when web sources didn't yield enough signal.** Try Clay by name. Often returns nothing for personal-name accounts. |
-| 4 | Name + self-selected only | `name_only` | Last resort. Parse name for clues + Vertical fallback table. |
+| 1 | `mcp__claude_ai_Alocet_MCP_for_Enrichement__get_contacts_for_account` | (per §1a-bis) | First, try to recover a real customer domain from contacts. If found, restart at Path A. |
+| 2 | **Clay enrichment** | `clay` | **PRIMARY.** Try Clay by company name. Often returns nothing for purely-personal-name accounts, but works for any account with even minor web presence. |
+| 3 | WebSearch company + city | `search_verified` / `search_snippet` | Search `"{company name}"` (+city/state if known). |
+| 4 | WebSearch BBB | `bbb_search` | Search `"{company name} BBB"`. |
+| 5 | Name + self-selected only | `name_only` | Last resort. Parse name for clues + Vertical fallback table. |
 
-#### When to invoke Clay (the fallback rule)
+#### When to stop early
 
-After running the web sources for the relevant path, ask: **"Do I have enough signal to classify confidently (≥0.65 confidence at L2 level)?"**
+After steps 1-3, ask: **"Do I have enough signal to classify confidently (≥0.65 confidence at L2 level)?"**
 
-- ✅ Yes → skip Clay, proceed to 1e. (Saves a Clay credit; web data is sufficient.)
-- ❌ No → invoke Clay. Reason across web + Clay together for the final decision.
+- ✅ Yes → proceed to 1e.
+- ❌ No → continue down the waterfall.
 
-This adaptive use of Clay keeps the cost down while ensuring we have a safety net for accounts with weak web presence.
+If you reach `name_only` without confident signal AND no positive evidence has been found, write UNCLASSIFIABLE rather than guessing.
 
 ### 1e. Classify in a single reasoning pass
 
