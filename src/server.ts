@@ -70,7 +70,7 @@ export function createServer(): McpServer {
           .string()
           .min(1)
           .describe(
-            'V7 L3 label. For the current test table, this stores the AccountRecordID as a string instead of the L3 label (will change in production schema).',
+            'V7 L3 label (e.g., "Industrial Equipment Mfg"). Written to the CustomerIndustryClassification.L3 column.',
           ),
       },
     },

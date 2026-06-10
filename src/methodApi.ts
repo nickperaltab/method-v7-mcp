@@ -130,31 +130,48 @@ export async function getAccountsNeedingClassification(
   excludeAlreadyClassified = true,
 ): Promise<MethodAccount[]> {
   const cappedLimit = Math.min(Math.max(limit, 1), 500);
-  // Fetch a wider net so we have room to filter internals + already-classified client-side.
-  const fetchLimit = Math.min(cappedLimit * 4, 500);
+  // Method's OData caps page size at 100. The prior implementation set top=500
+  // and never paginated, so it could only ever see the newest 100 accounts —
+  // once those were all classified, the routine returned 0 and the backlog of
+  // older unclassified accounts became permanently invisible. Fix: real pagination.
+  const PAGE = 100;
+  // Hard cap on scan depth so a fully-classified base doesn't loop forever
+  // (100 pages × 100 rows = up to 10k candidates considered).
+  const MAX_PAGES = 100;
+
+  // Pre-fetch the classified set once if dedup is on; filter inline as we paginate.
+  const classified = excludeAlreadyClassified
+    ? await fetchAllClassifiedAccountIds()
+    : new Set<number>();
 
   const filter = 'IsActive eq true and IsTestAccount eq false and IsMethoderAccount eq false';
   const select = ACCOUNT_SELECT_FIELDS.join(',');
 
-  const params = new URLSearchParams({
-    select,
-    filter,
-    top: String(fetchLimit),
-    orderby: 'RecordID desc',
-  });
+  const out: MethodAccount[] = [];
+  let skip = 0;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      select,
+      filter,
+      top: String(PAGE),
+      skip: String(skip),
+      orderby: 'RecordID desc',
+    });
+    const res = await methodApi(`/CustomerMethodAccount?${params.toString()}`);
+    const data = (await res.json()) as { count: number; value: MethodAccount[] };
+    const pageRows = data.value;
 
-  const res = await methodApi(`/CustomerMethodAccount?${params.toString()}`);
-  const data = (await res.json()) as { count: number; value: MethodAccount[] };
-
-  // Client-side filter against Method-internal/template name patterns
-  let candidates = data.value.filter((a) => !isInternalAccount(a.AccountFriendlyName));
-
-  if (excludeAlreadyClassified) {
-    const classified = await fetchAllClassifiedAccountIds();
-    candidates = candidates.filter((a) => !classified.has(a.RecordID));
+    for (const row of pageRows) {
+      if (isInternalAccount(row.AccountFriendlyName)) continue;
+      if (excludeAlreadyClassified && classified.has(row.RecordID)) continue;
+      out.push(row);
+      if (out.length >= cappedLimit) return out;
+    }
+    if (pageRows.length < PAGE) break; // exhausted the table
+    skip += PAGE;
   }
 
-  return candidates.slice(0, cappedLimit);
+  return out;
 }
 
 // ── Review tools ─────────────────────────────────────────────────────────
