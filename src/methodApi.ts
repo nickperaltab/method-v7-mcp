@@ -430,6 +430,76 @@ export interface WriteV7Result {
 // Hardcoded destination — never parameterize this.
 const DEST_TABLE = 'CustomerIndustryClassification';
 
+// ── Taxonomy tuple validation ────────────────────────────────────────────
+// Loaded once at boot from the bundled TAXONOMY_V7.csv. Rejects writes whose
+// (L1, L2, L3) isn't an exact taxonomy row — catches abbreviation drift
+// ("Industrial Equipment Mfg"), stale V6 names ("Services & Trades"), and
+// hallucinated categories. Audit 2026-06-10 found 121 such rows already in
+// production before this check existed.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+// Minimal RFC-4180 CSV field splitter — quote-aware, because L2 values like
+// "HVAC, Plumbing & Electrical" contain commas inside quoted fields. A naive
+// split(',') would chop those and silently reject legitimate writes.
+function splitCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } // escaped quote
+        else inQuotes = false;
+      } else cur += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ',') { fields.push(cur); cur = ''; }
+      else cur += ch;
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
+function loadValidTuples(): Set<string> {
+  const tuples = new Set<string>(['UNCLASSIFIABLE|UNCLASSIFIABLE|UNCLASSIFIABLE']);
+  try {
+    const csvPath = join(process.cwd(), 'v7', 'taxonomy', 'TAXONOMY_V7.csv');
+    const text = readFileSync(csvPath, 'utf-8');
+    const lines = text.split('\n').slice(1); // header skipped; no L1/L2/L3 cell contains a newline
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const parts = splitCsvLine(line);
+      if (parts.length < 3) continue;
+      const [l1, l2, l3] = [parts[0].trim(), parts[1].trim(), parts[2].trim()];
+      if (l1 && l2 && l3) tuples.add(`${l1}|${l2}|${l3}`);
+    }
+  } catch (e) {
+    // Fail open with a console warning rather than blocking all writes if the
+    // CSV isn't found in the deploy bundle. The harness + routine prompt still
+    // enforce tuples; this is defense-in-depth, not the only gate.
+    console.error('[taxonomy] could not load TAXONOMY_V7.csv for tuple validation:', e);
+    return new Set<string>(); // empty set = validation disabled
+  }
+  return tuples;
+}
+
+const VALID_TUPLES = loadValidTuples();
+
+function checkTupleValidity(input: V7ClassificationInput): string | null {
+  if (VALID_TUPLES.size === 0) return null; // CSV unavailable — fail open
+  const key = `${input.l1.trim()}|${input.l2.trim()}|${input.l3.trim()}`;
+  if (VALID_TUPLES.has(key)) return null;
+  return (
+    `Invalid taxonomy tuple: (${input.l1} | ${input.l2} | ${input.l3}) is not an exact ` +
+    `row in TAXONOMY_V7.csv. Copy the L1/L2/L3 strings exactly from the taxonomy — ` +
+    `no abbreviations (write "Manufacturing", not "Mfg"). For unclassifiable accounts ` +
+    `use l1=l2=l3=UNCLASSIFIABLE.`
+  );
+}
+
 // P4 enforcement: L3 values that are forbidden as catch-all fallbacks.
 // Per V7-Pipeline-Spec Principle 4 + CLASSIFY-PIPELINE.md §1e top-of-section rule.
 // Added 2026-06-05 after audit found 190 mis-labeled accounts using these as defaults
@@ -474,6 +544,8 @@ function normalizeClassifiedAt(input?: string): string {
 
 export async function writeV7Classification(input: V7ClassificationInput): Promise<WriteV7Result> {
   // P4 enforcement: reject catch-all L3s with weak evidence before any API call.
+  const tupleError = checkTupleValidity(input);
+  if (tupleError) throw new Error(tupleError);
   const rejection = checkCatchallRejection(input);
   if (rejection) throw new Error(rejection);
 
