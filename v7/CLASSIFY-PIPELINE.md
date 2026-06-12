@@ -91,7 +91,9 @@ qs = urllib.parse.urlencode({
 contacts = method_get(f'/Contacts?{qs}')
 ```
 
-For each contact's email, extract the domain. **Keep the first domain that is NOT in:** freemail list, method.me, methodintegration.com, OR the primary account's email domain.
+For each contact's email, extract the domain. **Keep the first domain that is NOT in:** freemail list, method.me, methodintegration.com, mailinator.com, OR the primary account's email domain.
+
+**Test-account signal:** if the ONLY contacts found are at `mailinator.com`, `method.me`, or `methodintegration.com`, the account is almost certainly a Method onboarding/QA artifact — preserve UNCLASSIFIABLE with `needs_review = true` and note the contact domain in the reasoning. (Primary-email internal domains are already filtered server-side at the pull; this rule covers the contact-level variant.)
 
 If a customer-looking domain is found → use it as the source for the WebFetch waterfall (Path A). Mark `content_source = 'contact_lookup'` if this becomes the primary classification signal.
 

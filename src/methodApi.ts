@@ -82,6 +82,25 @@ function isInternalAccount(name: string): boolean {
   return INTERNAL_NAME_PATTERNS.some((p) => lc.includes(p));
 }
 
+// Email-domain exclusion — complements the name patterns above. Added
+// 2026-06-12 after two consecutive routine runs pulled Method-internal
+// onboarding/QA accounts whose NAMES looked legit but whose primary emails
+// were @method.me / mailinator (e.g., "Maria Perdomo" = ayushi.patel@method.me
+// onboarding test, "Ami" = j.murray+qa1@method.me). Method's own
+// IsTestAccount/IsMethoderAccount flags were not set on these.
+const INTERNAL_EMAIL_DOMAINS = new Set<string>([
+  'method.me',
+  'methodintegration.com',
+  'mailinator.com',
+]);
+
+function isInternalEmail(email: string | undefined | null): boolean {
+  const e = (email ?? '').toLowerCase().trim();
+  const at = e.lastIndexOf('@');
+  if (at < 0) return false;
+  return INTERNAL_EMAIL_DOMAINS.has(e.slice(at + 1));
+}
+
 // Shared field list used by both account-fetching tools so callers see a
 // consistent shape. Adding a field here surfaces it in every tool output.
 const ACCOUNT_SELECT_FIELDS = [
@@ -163,6 +182,7 @@ export async function getAccountsNeedingClassification(
 
     for (const row of pageRows) {
       if (isInternalAccount(row.AccountFriendlyName)) continue;
+      if (isInternalEmail(row.CustomerEmail)) continue;
       if (excludeAlreadyClassified && classified.has(row.RecordID)) continue;
       out.push(row);
       if (out.length >= cappedLimit) return out;
