@@ -121,22 +121,51 @@ const ACCOUNT_SELECT_FIELDS = [
   'IsActive',
 ];
 
-// Method API caps page size at 100. Paginate via skip to pull all classified IDs.
-async function fetchAllClassifiedAccountIds(): Promise<Set<number>> {
+// Re-classification cutoffs. "Skip" = this account is already done well enough; don't pull again.
+// Re-classify if: label is weak AND old enough that the prompt has had a chance to improve.
+const RECLASSIFY_MIN_CONFIDENCE = 0.65;          // labels below this are weak
+const RECLASSIFY_SETTLE_DAYS = 7;                // don't re-touch labels younger than this
+
+// Returns the SKIP-LIST: RIDs whose current classification is "good enough" or "too fresh
+// to re-touch yet." Everything NOT in this set is eligible for the work queue, which means
+// either (a) never classified, or (b) classified with a weak label more than 7 days ago.
+// This makes the routine self-healing: as the prompt + enrichment improve, weak old labels
+// automatically cycle back through for re-classification with no separate cron.
+async function fetchClassificationSkipList(): Promise<Set<number>> {
   const ids = new Set<number>();
   const pageSize = 100;
   let skip = 0;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - RECLASSIFY_SETTLE_DAYS);
+
   while (true) {
     const params = new URLSearchParams({
-      select: 'AccountRecordID',
+      select: 'AccountRecordID,Confidence,L1,ClassifiedAt',
       top: String(pageSize),
       skip: String(skip),
       orderby: 'RecordID asc',
     });
     const res = await methodApi(`/${DEST_TABLE}?${params.toString()}`);
-    const data = (await res.json()) as { value: Array<{ AccountRecordID?: number | null }> };
+    const data = (await res.json()) as {
+      value: Array<{
+        AccountRecordID?: number | null;
+        Confidence?: number | null;
+        L1?: string | null;
+        ClassifiedAt?: string | null;
+      }>;
+    };
     for (const r of data.value) {
-      if (typeof r.AccountRecordID === 'number') ids.add(r.AccountRecordID);
+      if (typeof r.AccountRecordID !== 'number') continue;
+      const conf = r.Confidence ?? 0;
+      const l1 = (r.L1 ?? '').trim();
+      const classifiedAt = r.ClassifiedAt ? new Date(r.ClassifiedAt) : null;
+
+      const isStrongLabel = conf >= RECLASSIFY_MIN_CONFIDENCE && l1 !== '' && l1 !== 'UNCLASSIFIABLE';
+      // If we can't parse ClassifiedAt, treat as recent (don't re-touch); safer than re-classifying
+      // every label on every run.
+      const isRecent = !classifiedAt || classifiedAt > cutoff;
+
+      if (isStrongLabel || isRecent) ids.add(r.AccountRecordID);
     }
     if (data.value.length < pageSize) break;
     skip += pageSize;
@@ -158,9 +187,11 @@ export async function getAccountsNeedingClassification(
   // (100 pages × 100 rows = up to 10k candidates considered).
   const MAX_PAGES = 100;
 
-  // Pre-fetch the classified set once if dedup is on; filter inline as we paginate.
+  // Pre-fetch the skip-list once: RIDs whose current label is strong OR too fresh to re-touch.
+  // Everything not in this set is eligible — covers both never-classified accounts AND
+  // accounts whose label is weak (UNCLASSIFIABLE or conf<0.65) and older than the settle period.
   const classified = excludeAlreadyClassified
-    ? await fetchAllClassifiedAccountIds()
+    ? await fetchClassificationSkipList()
     : new Set<number>();
 
   const filter = 'IsActive eq true and IsTestAccount eq false and IsMethoderAccount eq false';
