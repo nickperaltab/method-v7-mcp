@@ -216,10 +216,10 @@ Examples:
 
 | Signal | Classification |
 |--------|---------------|
-| Farm/ranch producing goods, nursery, garden center | **Retail & Consumer > Agriculture & Farming** |
+| Farm/ranch producing goods, nursery, garden center | **Manufacturing & Distribution > Agriculture & Farming** _(moved from R&C 2026-06-18 — farms are producers selling into the supply chain; operating_model `B2B_Producer`/`Hybrid_Producer`, or `DTC_Producer` for a pure farm stand)_ |
 | Farm equipment manufacturer | **M&D > Industrial Equipment Manufacturing** |
 | Farm supply distributor | **M&D > appropriate distribution L3** |
-| Farm consulting | **PBS > Strategy & Management Consulting** |
+| Farm consulting | **PBS > appropriate consulting L3** (e.g. Agricultural/Engineering or Management Consulting — NOT the P4-forbidden "Strategy & Management Consulting" catch-all) |
 
 ### Rule 8: IT / Technology / QuickBooks
 

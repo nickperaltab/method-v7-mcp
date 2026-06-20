@@ -32,7 +32,7 @@ Read `v7/rules/industry-classification-rules.md` for the 4 core principles + L1/
 
 The 4 principles are:
 1. **Identity over Activity** — classify by what the business IS, not how it operates
-2. **Storefront Test** — B2B reseller → MWD > Distribution; B2C primary channel → R&C
+2. **Storefront Test** — B2B reseller → MWD > Distribution; B2C primary channel → R&C. **It routes to Retail ONLY for *consumer goods*.** An e-commerce site alone does NOT make an industrial/equipment/B2B-goods reseller a consumer retailer (shipping containers, commercial fitness equipment, building materials to contractors, industrial supplies) → those are **M&D Distribution** regardless of a public website (`Hybrid_Producer` if both B2C+B2B, `B2B_Distributor` if mostly business; equipment *rental* → M&D equipment distribution). Test by dominant customer: would a normal household routinely buy this product? No → Distribution.
 3. **Require Positive Evidence** — never infer from absence; vague language → flag, don't default
 4. **No Catch-All Defaults** — never use a "General"/"Other"/Strategy & Consulting bucket as a fallback
 
@@ -66,6 +66,7 @@ Before any external enrichment, read what Method already knows about the account
 
 **How to use them:**
 - `QBOIndustryType` populated with a **specific** value → strong prior, lock L1/L2 after quick web confirm. Populated with a **generic** value → do the full web enrichment before trusting it.
+- **No-website rescue (added 2026-06-18):** for freemail / no-fetchable-domain accounts that would otherwise go UNCLASSIFIABLE, a **specific** `QBOIndustryType` is often the only signal — and it's a good one (~90% of accounts have a connected QuickBooks). Classify from it directly (map the QB industry to V7), mark `content_source = 'qbo_industry'`, confidence 0.62–0.72. Do NOT default such accounts to UNCLASSIFIABLE when a specific QB industry exists. (`QBOIndustryType` is readable via the Method REST API on `CustomerMethodAccount` — no separate Alocet/VPN access needed.)
 - If `IndustryCode != '999999'` and looks like a NAICS code, map to V7 L1/L2 directly (consult NAICS → V7 mapping table at end of §1a if available).
 - If `Vertical` is meaningfully set (not null/Other/General), bias toward that L1 and use enrichment to refine L2/L3 — except the two traps noted above (Accounting/Bookkeeping → check for QB consultant; Wholesale/distribution → check for manufacturer).
 - Use `CustDatCountOfCustomers` as a B2B-vs-B2C tiebreaker (low count = B2B specialist, high count = B2C or broad services).
@@ -259,7 +260,7 @@ final_confidence = 0.60 * ai_confidence + 0.25 * source_weight + 0.15 * content_
 
 | | Source | Weight |
 |---|---|---|
-| `pre_enriched` | 0.85 | |
+| `pre_enriched` | 0.45 | (self-vertical only, no web evidence — see gate below) |
 | `clay_only` | 0.45 | |
 | `web_fetch` | 1.0 | |
 | `bbb_search` | 0.85 | |
@@ -278,11 +279,14 @@ final_confidence = 0.60 * ai_confidence + 0.25 * source_weight + 0.15 * content_
 
 **Hard cap:** `name_only` sources max at `final_confidence = 0.70`.
 
+**No-evidence gate (added 2026-06-18 — root-cause fix):** A label derived ONLY from the self-selected `Vertical` / `QBOIndustryType` with **no fetched web content** (i.e. `content_source` = `pre_enriched` or `name_only`, content_chars = 0) must cap `final_confidence ≤ 0.55` AND set `needs_review = true`. Rationale: the self-vertical is wrong 20–57% of the time in Retail/Automotive/Construction; never let a no-evidence label *look* trustworthy. (A **specific** `QBOIndustryType` confirmed by a quick web check is real evidence and is exempt — mark `content_source = 'qbo_industry'`.)
+
 ### 1h. Set the review flag
 `needs_review = true` when ANY of:
 - `final_confidence < 0.55`
 - No `Vertical` AND `final_confidence < 0.60`
 - Classification is `UNCLASSIFIABLE`
+- Label derived from self-vertical/QBO with no web content (see no-evidence gate)
 
 ### 1i. Write the result
 Call MCP tool `write_v7_classification` with ALL 13 fields populated where you have them:
