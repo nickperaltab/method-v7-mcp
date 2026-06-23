@@ -121,6 +121,10 @@ If `AccountFriendlyName` contains (case-insensitive): `home watch`, `homewatch`,
 
 ### 1d. Enrichment waterfall (two paths based on email)
 
+**Source 0 — READ-FIRST from the cache (added 2026-06-23).** Before any web fetch, read `project-for-method-dw.v7_classification.account_enrichment_raw` for this `account_record_id` (rows with `content_chars > 200`). If stored content clearly describes THIS company (name-match), classify from it — **do NOT re-scrape.** We pay to scrape an account once; every later run reads the cache. Only fall through to the live sources below when the cache is empty, thin, or about a different company (contamination — see §1c name-match gate).
+
+**WRITE-BACK (mandatory).** Whenever you DO fetch live (Clay/WebSearch/WebFetch/Firecrawl), you MUST write the raw result back to `account_enrichment_raw` (`account_record_id`, `source`, `url`, `content`, `content_chars`, `fetched_at`, `classification_run`). In batch runs, emit the raw content to a per-batch evidence file that the finalize step loads. A fetch that isn't stored is wasted money — the next run will re-scrape it. *(2026-06-23: a reasoning re-run fetched ~400 accounts and stored none, forcing avoidable re-scrapes. Don't repeat that.)*
+
 **Run sources in order until you have useful business content (≥100 chars of substantive text). Use the FIRST source that yields a clear signal.**
 
 **⚠️ Runtime note (2026-06-11):** Claude.ai cloud routines have their WebFetch requests blocked by ~90% of customer sites (Cloudflare-hosted small-business sites blocklist known cloud IPs; returns 403). **Clay is now the primary enrichment source, not the fallback.** WebFetch is still listed below — try it once, but expect failure in cloud sessions and fall through quickly. Local Claude Code sessions (residential IP) can still rely on WebFetch as the highest-fidelity source.
