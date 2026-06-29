@@ -560,21 +560,43 @@ const FORBIDDEN_CATCHALL_L3 = new Set<string>([
   'General Wholesale & Distribution',
 ]);
 
-// Block writes of forbidden L3s when evidence is weak.
+// Sources that count as "strong evidence" for catch-all L3s. These are the
+// only paths that explicitly verified the customer's identity from primary
+// web data (their own site, Clay's firmographic database, BBB, or search-engine
+// confirmation of the business). Excludes: name_only, name_override,
+// pre_enriched, search_snippet, contact_lookup, recovery_reclassified — these
+// can be strong for niche-specific L3s but are too easy a default for
+// catch-alls (audit 2026-06-29 found 8 weak-evidence catch-all writes that
+// slipped through the looser rule).
+const STRONG_SOURCES_FOR_CATCHALL = new Set<string>([
+  'web_fetch',
+  'firecrawl',
+  'search_verified',
+  'bbb_search',
+  'clay',
+  'clay_only',
+]);
+
+const CATCHALL_MIN_CONFIDENCE = 0.70;
+
+// Block writes of forbidden L3s unless evidence is strong (allowlist approach).
 // Returns null if allowed; returns error message if blocked.
 function checkCatchallRejection(input: V7ClassificationInput): string | null {
   if (!FORBIDDEN_CATCHALL_L3.has(input.l3)) return null;
   const conf = input.confidence ?? 0;
   const source = (input.content_source ?? '').toLowerCase();
-  const hasWeakSource = source === 'name_only' || source === '';
-  const hasWeakConfidence = conf < 0.65;
-  if (hasWeakSource || hasWeakConfidence) {
+  const hasStrongSource = STRONG_SOURCES_FOR_CATCHALL.has(source);
+  const hasStrongConfidence = conf >= CATCHALL_MIN_CONFIDENCE;
+  if (!hasStrongSource || !hasStrongConfidence) {
+    const allowedSources = Array.from(STRONG_SOURCES_FOR_CATCHALL).join(', ');
     return (
-      `Refusing to write forbidden catch-all L3 "${input.l3}" with weak evidence ` +
-      `(content_source="${source || 'unset'}", confidence=${conf}). ` +
-      `Per CLASSIFY-PIPELINE.md §1e P4 rule: write l1=l2=l3=UNCLASSIFIABLE instead. ` +
-      `If this account genuinely IS ${input.l3.toLowerCase()}, re-classify with ` +
-      `web_fetch / search_verified / bbb_search evidence and confidence >= 0.65.`
+      `Refusing to write forbidden catch-all L3 "${input.l3}" without strong evidence ` +
+      `(got content_source="${source || 'unset'}", confidence=${conf}). ` +
+      `Per CLASSIFY-PIPELINE.md §1e P4 rule, these L3s require BOTH ` +
+      `content_source in {${allowedSources}} AND confidence >= ${CATCHALL_MIN_CONFIDENCE}. ` +
+      `Either (a) re-classify with primary web evidence (fetch the customer's site, ` +
+      `confirm via Clay, or get a positive search-verified result), or ` +
+      `(b) write l1=l2=l3=UNCLASSIFIABLE if no specific L3 can be confirmed.`
     );
   }
   return null;
